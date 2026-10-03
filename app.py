@@ -23,19 +23,14 @@ st.set_page_config(page_title="福利厚生検索アプリ", page_icon=str(ASSET
 
 st.logo(str(ASSETS / "logo.png"), size="large")
 
-# ② 開発用ログイン: secrets.toml に dev_login = true があれば、サイドバーで見本の利用者を選んでログインした状態にできる
-#    パスワードを確かめないため、本番（Streamlit Cloud など）の設定には書かない
-try:
-    dev_login = bool(st.secrets.get("dev_login", False))
-except Exception:
-    dev_login = False
+# ② 開発用ログイン: サイドバーで見本の利用者を選ぶと、その人としてログインした状態になる
+#    パスワードを確かめない仕組みなので、本番運用では外す
 st.sidebar.title("福利厚生検索アプリ")
-if dev_login:
-    users = [User.from_row(r) for r in table("users").select("*").is_("deleted_at", "null").order("name").execute().data]
-    labels = {f"{u.name}（{ROLES.get(u.role, u.role)}・{u.department or ''}）": u for u in users}
-    # 選び直したときだけ切り替える（ログインフォームでのログインを上書きしないため）
-    st.sidebar.selectbox("開発用: 利用者を選ぶ", list(labels), index=None, key="dev_user", placeholder="選ぶとその人としてログインした状態になる",
-                         on_change=lambda: set_user(labels[st.session_state["dev_user"]]) if st.session_state.get("dev_user") else None)
+users = [User.from_row(r) for r in table("users").select("*").is_("deleted_at", "null").order("name").execute().data]
+labels = {f"{u.name}（{ROLES.get(u.role, u.role)}・{u.department or ''}）": u for u in users}
+# 選び直したときだけ切り替える（ログインフォームでのログインを上書きしないため）
+st.sidebar.selectbox("開発用: 利用者を選ぶ", list(labels), index=None, key="dev_user", placeholder="選ぶとその人としてログインした状態になる",
+                     on_change=lambda: set_user(labels[st.session_state["dev_user"]]) if st.session_state.get("dev_user") else None)
 
 # ③ サイドバー（with st.sidebar）。ログイン中なら名前と、PAGES のメニュー
 user = current_user()
@@ -48,7 +43,7 @@ with st.sidebar:
 
 # ④ 未ログインなら案内を出して止める（st.stop）
 if user is None:
-    st.info("ログインしてください。ログイン機能ができるまでは、secrets.toml に dev_login = true を書き、左の「開発用: 利用者を選ぶ」で選びます。")
+    st.info("ログインしてください。ログイン機能ができるまでは、左の「開発用: 利用者を選ぶ」で選びます。")
     st.stop()
 
 # ⑤ st.session_state["page"] に応じて ui/ の render() を読み込んで呼ぶ
