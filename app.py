@@ -10,7 +10,7 @@ from pathlib import Path
 import streamlit as st
 
 from db import table
-from models import User
+from models import ROLES, User
 from session import current_user, set_user
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -23,32 +23,32 @@ st.set_page_config(page_title="福利厚生検索アプリ", page_icon=str(ASSET
 
 st.logo(str(ASSETS / "logo.png"), size="large")
 
-# ② 開発用: secrets.toml に login_as（メールアドレス）があれば、その利用者としてログインした状態にする
+# ② 開発用ログイン: secrets.toml に dev_login = true があれば、サイドバーで見本の利用者を選んでログインした状態にできる
 #    パスワードを確かめないため、本番（Streamlit Cloud など）の設定には書かない
 try:
-    login_as = st.secrets.get("login_as")
+    dev_login = bool(st.secrets.get("dev_login", False))
 except Exception:
-    login_as = None
-if login_as and current_user() is None:
-    rows = table("users").select("*").eq("email", login_as).is_("deleted_at", "null").limit(1).execute().data
-    if rows:
-        set_user(User.from_row(rows[0]))
+    dev_login = False
+st.sidebar.title("福利厚生検索アプリ")
+if dev_login:
+    users = [User.from_row(r) for r in table("users").select("*").is_("deleted_at", "null").order("name").execute().data]
+    labels = {f"{u.name}（{ROLES.get(u.role, u.role)}・{u.department or ''}）": u for u in users}
+    # 選び直したときだけ切り替える（ログインフォームでのログインを上書きしないため）
+    st.sidebar.selectbox("開発用: 利用者を選ぶ", list(labels), index=None, key="dev_user", placeholder="選ぶとその人としてログインした状態になる",
+                         on_change=lambda: set_user(labels[st.session_state["dev_user"]]) if st.session_state.get("dev_user") else None)
 
 # ③ サイドバー（with st.sidebar）。ログイン中なら名前と、PAGES のメニュー
 user = current_user()
 with st.sidebar:
-    st.title("福利厚生検索アプリ")
     if user is not None:
         st.write(f"{user.name}（{user.department or ''}）")
-        if login_as:
-            st.caption("開発用ログイン中（secrets.toml の login_as）")
         if PAGES:
             choice = st.radio("メニュー", list(PAGES.values()), label_visibility="collapsed")
             st.session_state["page"] = next(k for k, v in PAGES.items() if v == choice)
 
 # ④ 未ログインなら案内を出して止める（st.stop）
 if user is None:
-    st.info("ログインしてください。ログイン機能ができるまでは、secrets.toml の login_as でログインした状態にします。")
+    st.info("ログインしてください。ログイン機能ができるまでは、secrets.toml に dev_login = true を書き、左の「開発用: 利用者を選ぶ」で選びます。")
     st.stop()
 
 # ⑤ st.session_state["page"] に応じて ui/ の render() を読み込んで呼ぶ
