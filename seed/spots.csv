@@ -1,0 +1,17 @@
+area_code,kind,name,description,url
+hakone,meal,箱根 田むら銀かつ亭,豆腐かつ煮が名物の老舗,https://example.com/hakone/ginkatsu
+hakone,meal,箱根 甘酒茶屋,江戸時代から続く茶屋。甘酒と力餅,https://example.com/hakone/amazake
+hakone,leisure,箱根彫刻の森美術館,屋外彫刻と体験型の作品,https://example.com/hakone/chokoku
+hakone,leisure,箱根ロープウェイ,大涌谷と芦ノ湖を結ぶ,https://example.com/hakone/ropeway
+atami,meal,熱海 囲炉茶屋,干物と地魚の定食,https://example.com/atami/irori
+atami,leisure,熱海サンビーチ,市街地に近い砂浜。夜はライトアップ,https://example.com/atami/sunbeach
+atami,leisure,MOA美術館,海を見下ろす高台の美術館,https://example.com/atami/moa
+karuizawa,meal,軽井沢 川上庵,そばと一品料理,https://example.com/karuizawa/kawakamian
+karuizawa,leisure,旧軽井沢銀座,土産物と食べ歩きの通り,https://example.com/karuizawa/ginza
+karuizawa,leisure,白糸の滝,幅70mの滝。夏は涼しい,https://example.com/karuizawa/shiraito
+kyoto,meal,京都 おめん 銀閣寺本店,うどんと野菜の薬味,https://example.com/kyoto/omen
+kyoto,leisure,清水寺,舞台からの眺め。夜間拝観あり,https://example.com/kyoto/kiyomizu
+kyoto,leisure,嵐山 竹林の小径,早朝が静か,https://example.com/kyoto/arashiyama
+okinawa,meal,沖縄 首里そば,手打ちの沖縄そば,https://example.com/okinawa/shurisoba
+okinawa,leisure,古宇利大橋,全長約2kmの橋。ドライブに,https://example.com/okinawa/kouri
+okinawa,leisure,万座毛,象の鼻の形の断崖,https://example.com/okinawa/manzamo
