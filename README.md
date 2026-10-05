@@ -19,6 +19,40 @@ Step2-2 Webアプリ
 | なかりん（従業員投稿入力・保存） | posts.py, coupon.py, activity.py, spots.py, prices/crawl_spots.py, prices/crawl_targets.csv, dialogs/post.py, ui/review_tab.py, ui/coupon_card.py, ui/spots_tab.py, ui/mypage.py |
 | 共通 | app.py, db.py, models.py, session.py, seed/（embed_menus.py を除く）, sql/, assets/, requirements.txt, .gitignore, .gitattributes, .streamlit/config.toml, README.md |
 
+## データの取り出し方（Supabase）
+画面を作る前に、欲しいデータが取れるかをターミナルで試せる。アプリと同じ `db.py` の `table()` を使うので、試して取れた書き方をそのまま自分のファイルに貼れば動く。
+
+1. リポジトリのフォルダで仮想環境を有効にし、`python` と打って対話モードに入る（接続先は `.streamlit/secrets.toml` から読む）
+2. 次のように打つ。`.execute().data` で、行の一覧（辞書のリスト）が返る
+
+```python
+from db import table
+
+# 宿泊の施設を名前順に3件
+table("menus").select("name,category").eq("category", "stay").order("name").limit(3).execute().data
+
+# 箱根の施設（エリアのIDで絞る）
+area = table("areas").select("id").eq("code", "hakone").execute().data[0]["id"]
+table("menus").select("name").eq("area_id", area).execute().data
+
+# 名前に「水族館」を含む施設
+table("menus").select("name").ilike("name", "%水族館%").execute().data
+```
+
+| 書き方 | 意味 |
+|---|---|
+| `.select("列,列")` | 取り出す列（`"*"` で全部） |
+| `.eq("列", 値)` | 等しい |
+| `.in_("列", [値, 値])` | どれかに等しい |
+| `.ilike("列", "%語%")` | 語を含む |
+| `.gte("列", 値)` / `.lte("列", 値)` | 以上 / 以下 |
+| `.is_("列", "null")` | 空（削除されていない行は `.is_("deleted_at", "null")`） |
+| `.order("列")` / `.limit(件数)` | 並び替え / 件数 |
+
+- 主なテーブル: menus（施設）、plans（プラン）、areas（エリア）、users（利用者）、posts（口コミ）、market_prices（一般サイトの価格）、spots（周辺情報）。列名は `sql/001_schema.sql` か、チームLPのER図で確かめる
+- データの中身を表で見たいときは Supabase の Table Editor、SQLで試したいときは SQL Editor も使える
+- 試すときは取り出し（select）だけにする。insert・update・delete は共有の見本データを書き換えるため
+
 ## 画面を足すとき
 - 自分のブランチで画面のファイル（例: `ui/search_page.py`）を作り、同じプルリクエストで `app.py` につなぐ。`PAGES` に `"search": ":material/search: 検索"` のように1行、⑤の呼び分けに `elif page == "search":` と `from ui.search_page import render` / `render()` を足す
 - ログインフォームとログアウトは、ログイン機能（auth.py・ui/login_form.py）のプルリクエストで `app.py` につなぐ
