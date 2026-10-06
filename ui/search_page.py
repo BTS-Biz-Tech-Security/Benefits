@@ -13,12 +13,12 @@ from typing import Any
 
 import streamlit as st
 
-from day_plan import DayPlan, make_day_plans
+from day_plan import DayPlan, best_saving_plan, make_day_plans
 from models import CATEGORIES, Menu
 from nl_search import SEARCH_FOCUS_OPTIONS, ai_available, parse_plan
-from search import list_areas, min_benefit_price, search_menus
+from search import list_areas, search_menus
 from session import require_login
-from ui.day_plan import render_day_plan
+from ui.day_plan import price_text, render_day_plan
 from ui.detail_page import open_detail
 
 WEEKDAY_NAMES = ["月", "火", "水", "木", "金", "土", "日"]
@@ -61,12 +61,17 @@ def _render_menu_list(menus: list[Menu], key_prefix: str) -> None:
     results_page.py ができたら、この関数の中身をその表示（render_results）の呼び出しに置き換える。
     """
     for menu in menus:
-        price = min_benefit_price(menu)
-        price_text = f"福利厚生価格 {price:,}円〜" if price is not None else "価格未登録"
+        # 1日プランと同じく、お得額が最大の料金プランの金額を出す
+        plan = best_saving_plan(menu)
         with st.container(border=True):
             # 左に施設の情報、右に「詳細を見る」ボタン
             col_info, col_button = st.columns([5, 1], vertical_alignment="center")
-            col_info.markdown(f"**{menu.name}**　:gray[{_category_label(menu.category)}・{price_text}]")
+            plan_name = f"・{plan.name}" if plan else ""
+            col_info.markdown(f"**{menu.name}**　:gray[{_category_label(menu.category)}{plan_name}]")
+            if plan:
+                col_info.markdown(price_text(plan.list_price, plan.benefit_price))
+            else:
+                col_info.caption("価格未登録")
             if menu.description:
                 col_info.caption(menu.description)
             col_button.button("詳細を見る", key=f"{key_prefix}-{menu.id}", icon=":material/arrow_forward:",

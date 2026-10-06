@@ -5,25 +5,31 @@
 """
 from __future__ import annotations
 
+from typing import Optional
+
 import streamlit as st
 
-from day_plan import KIND_LABELS, DayPlan, PlanItem
+from day_plan import KIND_LABELS, DayPlan
 from ui.detail_page import open_detail
 
 
-def _price_text(item: PlanItem) -> str:
-    """「定価 30,000円 → 21,000円　9,000円お得（30%）」の形。お得額がなければ福利厚生価格だけ。"""
-    if item.price is None:
+def price_text(list_price: Optional[int], price: Optional[int], over_budget: Optional[int] = None) -> str:
+    """「定価 30,000円 → 21,000円　9,000円お得（30%）」の形。お得額がなければ福利厚生価格だけ。
+
+    1日プランと、検索画面の施設一覧の両方で使う（同じ見た目にそろえるため）。
+    """
+    if price is None:
         return ""
-    if not item.saving or item.list_price is None:
-        text = f"福利厚生 {item.price:,}円"
+    if list_price is None or list_price <= price:
+        text = f"福利厚生 {price:,}円"
     else:
-        old_price = f":gray[~~定価 {item.list_price:,}円~~ →]"  # ~~ ~~ は取り消し線
-        new_price = f"**{item.price:,}円**"
-        saving = f":green[**{item.saving:,}円お得**（{item.saving_rate}%）]"
-        text = f"{old_price} {new_price}　{saving}"
-    if item.over_budget:
-        text += f"　:orange-badge[予算＋{item.over_budget:,}円]"
+        saving = list_price - price
+        rate = round(saving * 100 / list_price)
+        old_price = f":gray[~~定価 {list_price:,}円~~ →]"  # ~~ ~~ は取り消し線
+        new_price = f"**{price:,}円**"
+        text = f"{old_price} {new_price}　:green[**{saving:,}円お得**（{rate}%）]"
+    if over_budget:
+        text += f"　:orange-badge[予算＋{over_budget:,}円]"
     return text
 
 
@@ -49,7 +55,7 @@ def render_day_plan(plan: DayPlan) -> None:
             if item.kind == "benefit":
                 col_name.markdown(item.name)
                 col_name.caption(item.plan_name or "")
-                col_price.markdown(_price_text(item))
+                col_price.markdown(price_text(item.list_price, item.price, item.over_budget))
                 # 福利厚生の施設は、「詳細を見る」ボタンで詳細画面に移れる
                 if item.menu_id:
                     col_button.button("詳細を見る", key=f"day-plan-{plan.area_id}-{item.slot}-{item.menu_id}",
