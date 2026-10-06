@@ -8,7 +8,7 @@ from __future__ import annotations
 import datetime
 import json
 import re
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import streamlit as st
 
@@ -44,13 +44,13 @@ def ai_available() -> bool:
 
 def normalize_conditions(raw: Any, today: Optional[datetime.date] = None) -> dict[str, Any]:
     """読み取った宿泊日・人数・予算を整える。読めない値は「指定なし」（None）にする。"""
-    raw = raw if isinstance(raw, dict) else {}
+    conditions: dict[str, Any] = cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
     today = today or datetime.date.today()
 
     # 月日（MM-DD）だけを使い、年はプログラムで決める（今日以降で最も近い日付）
     # 年付き（YYYY-MM-DD）で返った場合も、年は古いことがあるため無視して月日だけを使う
     stay_date = None
-    match = re.fullmatch(r"(?:\d{4}-)?(\d{1,2})-(\d{1,2})", str(raw.get("stay_date")))
+    match = re.fullmatch(r"(?:\d{4}-)?(\d{1,2})-(\d{1,2})", str(conditions.get("stay_date")))
     if match:
         try:
             stay_date = datetime.date(today.year, int(match.group(1)), int(match.group(2)))
@@ -66,7 +66,7 @@ def normalize_conditions(raw: Any, today: Optional[datetime.date] = None) -> dic
             return None
         return number if number > 0 else None
 
-    return {"stay_date": stay_date, "people": to_positive_int(raw.get("people")), "budget": to_positive_int(raw.get("budget"))}
+    return {"stay_date": stay_date, "people": to_positive_int(conditions.get("people")), "budget": to_positive_int(conditions.get("budget"))}
 
 
 def _drop_numeric_keywords(keywords: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -107,8 +107,8 @@ def _parse_with_ai(plan_text: str, focus: str, api_key: str) -> dict[str, Any]:
         # JSONモードでまれに起きる出力の暴走で、長時間待たされないよう上限を設ける
         max_tokens=1500,
     )
-    # 読めない場合は json.JSONDecodeError をそのまま呼び出し側へ返す
-    return json.loads(response.choices[0].message.content.strip())
+    # 読めない場合（返答が空のときも）は json.JSONDecodeError をそのまま呼び出し側へ返す
+    return json.loads((response.choices[0].message.content or "").strip())
 
 
 def parse_with_rules(plan_text: str) -> dict[str, Any]:

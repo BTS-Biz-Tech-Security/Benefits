@@ -92,7 +92,7 @@ def _condition_tab(tenant_id: str) -> None:
     with st.form("search_condition_form"):
         col_area, col_category = st.columns(2)
         area = col_area.selectbox("エリア", options=[ALL, *areas])
-        category = col_category.selectbox("カテゴリ", options=[ALL, *CATEGORIES], format_func=lambda k: CATEGORIES.get(k, k))
+        category = col_category.selectbox("カテゴリ", options=[ALL, *CATEGORIES], format_func=lambda k: CATEGORIES.get(k) or k)
 
         col_date, col_people, col_budget = st.columns(3)
         col_date.date_input("宿泊日", value=datetime.date.today() + datetime.timedelta(days=14), format="YYYY/MM/DD")

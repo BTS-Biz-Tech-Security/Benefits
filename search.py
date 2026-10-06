@@ -37,7 +37,7 @@ def filter_menus(menus: list[Menu], *, people: Optional[int] = None, budget: Opt
     - キーワード: 1つ以上含む施設。含む数の多い順、同数なら安い順
     """
     keywords = [k for k in keywords if k]
-    result = []
+    result: list[Menu] = []
     for menu in menus:
         if people and menu.max_people is not None and menu.max_people < people:
             continue
