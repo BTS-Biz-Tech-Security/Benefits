@@ -45,6 +45,7 @@ class PlanItem:
     description: Optional[str] = None
     url: Optional[str] = None
     # ここから下は福利厚生の施設だけに入る（お得額が最大の料金プランの値）。周辺スポットと自由時間は None
+    menu_id: Optional[str] = None  # 施設の id。施設名から詳細画面へ移るときに使う
     plan_name: Optional[str] = None
     list_price: Optional[int] = None  # 定価
     price: Optional[int] = None  # 福利厚生価格
@@ -135,7 +136,8 @@ def _pick_spot(spots: list[Spot], kind: str, used: set[str]) -> Optional[Spot]:
 
 def _benefit_item(slot: str, menu: Menu, budget: Optional[int]) -> PlanItem:
     """福利厚生の施設を、プランの1枠にする。金額はお得額が最大の料金プランのもの。"""
-    item = PlanItem(slot=slot, kind="benefit", name=menu.name, category=menu.category, description=menu.description)
+    item = PlanItem(slot=slot, kind="benefit", name=menu.name, category=menu.category, description=menu.description,
+                    menu_id=menu.id)
     plan = best_saving_plan(menu)
     if plan is None:
         return item

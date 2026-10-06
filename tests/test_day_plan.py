@@ -270,3 +270,10 @@ def test_make_day_plans_passes_budget(monkeypatch):
     monkeypatch.setattr(day_plan, "llm_api_key", lambda: None)
     plans = day_plan.make_day_plans("t", [menu("s1", "stay", price=28800, list_price=48000)], "箱根", budget=20000)
     assert plans[0].items[-1].over_budget == 8800
+
+
+def test_benefit_items_remember_menu_id():
+    # 施設名から詳細画面へ移れるよう、福利厚生の枠は施設の id を持つ。周辺スポットと自由時間は持たない
+    plan = built([menu("s1", "stay"), menu("l1", "leisure")], [spot("sp1", "meal")])
+    assert [(i.name, i.menu_id) for i in plan.items] == [
+        ("施設l1", "l1"), ("スポットsp1", None), (FREE_TIME, None), ("施設s1", "s1")]

@@ -19,6 +19,7 @@ from nl_search import SEARCH_FOCUS_OPTIONS, ai_available, parse_plan
 from search import list_areas, min_benefit_price, search_menus
 from session import require_login
 from ui.day_plan import render_day_plan
+from ui.detail_page import open_detail
 
 WEEKDAY_NAMES = ["月", "火", "水", "木", "金", "土", "日"]
 ALL = "すべて"
@@ -51,8 +52,10 @@ def _category_label(key: str) -> str:
 NOT_FOUND = "条件に合う施設が見つかりませんでした。条件を減らして探してください。"
 
 
-def _render_menu_list(menus: list[Menu]) -> None:
-    """施設の一覧をカードで並べる。両方のタブで使う。
+def _render_menu_list(menus: list[Menu], key_prefix: str) -> None:
+    """施設の一覧をカードで並べる。両方のタブで使う。施設名を押すと詳細画面に移る。
+
+    key_prefix はボタンの名前の頭に付ける文字。同じ施設が両方のタブに出ても、ボタンの名前が重ならないようにする。
 
     TODO(results_page.py): この一覧は仮のもの。一覧の表示と並び替えは ui/results_page.py（じゅんぺいさん担当）の役割なので、
     results_page.py ができたら、この関数の中身をその表示（render_results）の呼び出しに置き換える。
@@ -61,7 +64,9 @@ def _render_menu_list(menus: list[Menu]) -> None:
         price = min_benefit_price(menu)
         price_text = f"福利厚生価格 {price:,}円〜" if price is not None else "価格未登録"
         with st.container(border=True):
-            st.markdown(f"**{menu.name}**　:gray[{_category_label(menu.category)}・{price_text}]")
+            st.button(f"**{menu.name}**", key=f"{key_prefix}-{menu.id}", type="tertiary",
+                      icon=":material/arrow_forward:", on_click=open_detail, args=(menu.id,))
+            st.markdown(f":gray[{_category_label(menu.category)}・{price_text}]")
             if menu.description:
                 st.caption(menu.description)
 
@@ -75,7 +80,7 @@ def _render_plans_and_list(menus: list[Menu], plans: list[DayPlan]) -> None:
     for plan in plans:
         render_day_plan(plan)
     with st.expander(f"検索結果の施設一覧（{len(menus)}件）"):
-        _render_menu_list(menus)
+        _render_menu_list(menus, key_prefix="plan-tab")
 
 
 def _text_tab(tenant_id: str) -> None:
@@ -157,7 +162,7 @@ def _condition_tab(tenant_id: str) -> None:
             st.info(NOT_FOUND)
         else:
             st.markdown(f"**見つかった施設：{len(menus)}件**")
-            _render_menu_list(menus)
+            _render_menu_list(menus, key_prefix="search-tab")
 
 
 def render() -> None:

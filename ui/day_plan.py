@@ -8,6 +8,7 @@ from __future__ import annotations
 import streamlit as st
 
 from day_plan import KIND_LABELS, DayPlan, PlanItem
+from ui.detail_page import open_detail
 
 
 def _price_text(item: PlanItem) -> str:
@@ -46,7 +47,14 @@ def render_day_plan(plan: DayPlan) -> None:
             if item.url:
                 name = f"[{item.name}]({item.url})"  # 周辺スポットにリンクがあれば、名前をリンクにする
             if item.kind == "benefit":
-                col_name.markdown(f"{name}　:gray[{item.plan_name or ''}]")
+                # 福利厚生の施設は、名前を押すと詳細画面に移る
+                with col_name:
+                    if item.menu_id:
+                        st.button(item.name, key=f"day-plan-{plan.area_id}-{item.slot}-{item.menu_id}", type="tertiary",
+                                  on_click=open_detail, args=(item.menu_id,))
+                    else:
+                        st.markdown(item.name)
+                    st.caption(item.plan_name or "")
                 col_price.markdown(_price_text(item))
             elif item.kind == "spot":
                 col_name.markdown(name)

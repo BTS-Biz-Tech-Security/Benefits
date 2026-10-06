@@ -117,3 +117,23 @@ def search_menus(tenant_id: str, *, area_code: Optional[str] = None, category: O
     """
     menus = fetch_menus(tenant_id, area_code=area_code, category=category)
     return filter_menus(menus, people=people, budget=budget, keywords=keywords)
+
+
+def get_menu(menu_id: str, tenant_id: Optional[str] = None) -> Optional[Menu]:
+    """施設1件と、その料金プラン（福利厚生価格の安い順）。詳細画面で使う。見つからなければ None。
+
+    tenant_id を渡すと、そのテナントの施設だけを探す（他社の施設を開けないようにするため）。
+    """
+    # ① 施設を読む
+    query = table("menus").select(MENU_COLUMNS).eq("id", menu_id).is_("deleted_at", "null")
+    if tenant_id:
+        query = query.eq("tenant_id", tenant_id)
+    rows = rows_of(query.limit(1))
+    if not rows:
+        return None
+    menu = Menu.from_row(rows[0])
+
+    # ② 料金プランを、福利厚生価格の安い順に付ける
+    plan_query = table("plans").select("*").eq("menu_id", menu_id).is_("deleted_at", "null").order("benefit_price")
+    menu.plans = [Plan.from_row(r) for r in rows_of(plan_query)]
+    return menu
