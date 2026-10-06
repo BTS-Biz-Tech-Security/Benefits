@@ -27,7 +27,7 @@ def render() -> None:
         col1.metric("クーポン使用", "—")
         col2.metric("予約ページを開いた数", "—")
         col3.metric("ログイン", "—")
-        st.date_input("期間", value=(), disabled=True)
+        st.date_input("期間", value=[], disabled=True)  # 期間はまだ選べない（空の範囲）
     with tab_notify:
         # 見た目のみ（第6回決定）。会社ごとに使う連絡手段が違うため、横展開を考えてあとに回す
         st.caption("新着メニューや差額の実例を、社内の連絡手段に通知します。MVP では見た目のみです。")
