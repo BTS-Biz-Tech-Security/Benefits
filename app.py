@@ -44,9 +44,12 @@ with st.sidebar:
         render_login_form()
     else:
         st.write(f"{user.name}（{user.department or ''}）")
-        if PAGES:
-            choice = st.radio("メニュー", list(PAGES.values()), label_visibility="collapsed")
-            chosen = next(k for k, v in PAGES.items() if v == choice)
+        pages = dict(PAGES)
+        if user.is_admin():
+            pages["admin"] = ":material/settings: メニュー管理"  # 人事・経営の人にだけ出す
+        if pages:
+            choice = st.radio("メニュー", list(pages.values()), label_visibility="collapsed")
+            chosen = next(k for k, v in pages.items() if v == choice)
             # 詳細画面（メニューにない画面）を開いている間は、メニューの「検索」で上書きしない。
             # 詳細画面からは「検索結果に戻る」で戻る。ほかのメニューを選んだときは、そちらに移る
             if st.session_state.get("page") != "detail" or chosen != "search":
@@ -72,4 +75,7 @@ elif page == "search":
     render()
 elif page == "detail":
     from ui.detail_page import render
+    render()
+elif page == "admin":
+    from ui.admin_page import render
     render()
