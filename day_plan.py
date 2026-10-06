@@ -9,12 +9,14 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from models import Menu
+from nl_search import MODEL, llm_api_key
 from search import min_benefit_price
 
 # (枠, 入れるカテゴリ)。この順に並べる
 SLOTS = [("午前", "leisure"), ("昼", "meal"), ("午後", "leisure"), ("夜", "stay")]
 NIGHT = "夜"
 FREE_TIME = "自由時間"
+KIND_LABELS = {"benefit": "福利厚生", "spot": "周辺スポット", "free": "自由時間"}
 
 
 @dataclass
@@ -87,3 +89,48 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str) -> Opti
         day_trip=not any(i.slot == NIGHT for i in items),
         total_price=sum(prices) if prices else None,
     )
+
+
+def explain_by_rule(plan: DayPlan) -> str:
+    """AI を使わない説明文。「箱根で、午前は…、昼は…、午後は…、夜は…に泊まるプランです。」"""
+    prefix = f"{plan.area_name}で、" if plan.area_name else ""
+    head = prefix + "、".join(f"{i.slot}は{i.name}" for i in plan.items if i.slot != NIGHT)
+    if plan.day_trip:
+        return f"{head}を楽しむ日帰りのプランです。"
+    night = next(i for i in plan.items if i.slot == NIGHT)
+    return f"{head}、夜は{night.name}に泊まるプランです。"
+
+
+def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
+    from openai import OpenAI
+
+    lines = "\n".join(f"- {i.slot}：{i.name}（{KIND_LABELS[i.kind]}）{i.description or ''}" for i in plan.items)
+    prompt = (
+        "あなたは企業の福利厚生サービスに詳しい旅行アドバイザーです。"
+        "次の1日プランについて、利用者の希望に照らして、なぜこの組み合わせがよいかを2〜3文で説明してください。\n"
+        "- プランに含まれる場所以外の施設や店の名前を出さないこと\n"
+        "- 「自由時間」の枠は、その時間の過ごし方に一般的な言葉で触れる程度にすること\n"
+        "- 説明文だけを出力すること\n\n"
+        f"エリア：{plan.area_name}\n"
+        + ("宿泊：なし（日帰り）\n" if plan.day_trip else "")
+        + f"プラン：\n{lines}\n\n利用者の希望：{request_text}"
+    )
+    response = OpenAI(api_key=api_key).chat.completions.create(
+        model=MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=400,
+    )
+    return (response.choices[0].message.content or "").strip()
+
+
+def explain(plan: DayPlan, request_text: str) -> str:
+    """プランの説明文。AI のキーがあれば AI、なければ（または失敗したら）決まった文の型。"""
+    api_key = llm_api_key()
+    if api_key:
+        try:
+            text = _explain_with_ai(plan, request_text, api_key)
+        except Exception:  # AI の失敗で画面を止めない（決まった文の型に切り替える）
+            text = ""
+        if text:
+            return text
+    return explain_by_rule(plan)

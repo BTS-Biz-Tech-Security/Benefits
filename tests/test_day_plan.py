@@ -87,3 +87,42 @@ def test_skips_results_without_area():
 def test_no_plan_without_area():
     assert build_day_plan([], [], "箱根") is None
     assert build_day_plan([menu("x1", "stay", area=None)], [], "箱根") is None
+
+
+def test_explain_by_rule_with_stay():
+    plan = built([menu("s1", "stay"), menu("l1", "leisure"), menu("m1", "meal"), menu("l2", "leisure")], [])
+    assert day_plan.explain_by_rule(plan) == "箱根で、午前は施設l1、昼は施設m1、午後は施設l2、夜は施設s1に泊まるプランです。"
+
+
+def test_explain_by_rule_day_trip():
+    plan = built([menu("l1", "leisure")], [spot("sp1", "meal")])
+    assert day_plan.explain_by_rule(plan) == "箱根で、午前は施設l1、昼はスポットsp1、午後は自由時間を楽しむ日帰りのプランです。"
+
+
+def test_explain_without_key_uses_rule(monkeypatch):
+    monkeypatch.setattr(day_plan, "llm_api_key", lambda: None)
+    plan = built([menu("s1", "stay")], [])
+    assert day_plan.explain(plan, "温泉に行きたい") == day_plan.explain_by_rule(plan)
+
+
+def test_explain_falls_back_when_ai_fails(monkeypatch):
+    def boom(plan, request_text, api_key):
+        raise RuntimeError("network error")
+    monkeypatch.setattr(day_plan, "llm_api_key", lambda: "dummy")
+    monkeypatch.setattr(day_plan, "_explain_with_ai", boom)
+    plan = built([menu("s1", "stay")], [])
+    assert day_plan.explain(plan, "温泉に行きたい") == day_plan.explain_by_rule(plan)
+
+
+def test_explain_falls_back_when_ai_returns_empty(monkeypatch):
+    monkeypatch.setattr(day_plan, "llm_api_key", lambda: "dummy")
+    monkeypatch.setattr(day_plan, "_explain_with_ai", lambda plan, request_text, api_key: "")
+    plan = built([menu("s1", "stay")], [])
+    assert day_plan.explain(plan, "温泉に行きたい") == day_plan.explain_by_rule(plan)
+
+
+def test_explain_uses_ai_text(monkeypatch):
+    monkeypatch.setattr(day_plan, "llm_api_key", lambda: "dummy")
+    monkeypatch.setattr(day_plan, "_explain_with_ai", lambda plan, request_text, api_key: "AIの説明です。")
+    plan = built([menu("s1", "stay")], [])
+    assert day_plan.explain(plan, "温泉に行きたい") == "AIの説明です。"
