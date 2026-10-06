@@ -11,8 +11,10 @@ HAKONE = "area-hakone"
 ATAMI = "area-atami"
 
 
-def menu(id: str, category: str, area: Optional[str] = HAKONE, price: Optional[int] = None) -> Menu:
-    plans = [Plan(id=f"p-{id}", menu_id=id, name="plan", list_price=price, benefit_price=price)] if price else []
+def menu(id: str, category: str, area: Optional[str] = HAKONE, price: Optional[int] = None,
+         list_price: Optional[int] = None) -> Menu:
+    """price は福利厚生価格、list_price は定価（省略すると price と同じ＝お得額0）。"""
+    plans = [Plan(id=f"p-{id}", menu_id=id, name="plan", list_price=list_price or price, benefit_price=price)] if price else []
     return Menu(id=id, tenant_id="t", name=f"施設{id}", category=category, area_id=area, plans=plans)
 
 
@@ -157,3 +159,31 @@ def test_make_day_plan_uses_loaded_spots(monkeypatch):
 
 def test_make_day_plan_none_without_results():
     assert day_plan.make_day_plan("t", [], "箱根で温泉") is None
+
+
+def test_picks_biggest_saving_per_slot():
+    menus = [menu("l1", "leisure", price=2500, list_price=3000), menu("l2", "leisure", price=3000, list_price=5000),
+             menu("l3", "leisure", price=3500, list_price=4000), menu("s1", "stay", price=20000, list_price=30000)]
+    plan = built(menus, [])
+    # 午前はお得額最大の l2（2,000円）。午後は 500円で同額の l1 と l3 のうち、検索結果で上位の l1
+    assert [(i.slot, i.name, i.saving) for i in plan.items] == [
+        ("午前", "施設l2", 2000), ("昼", FREE_TIME, None), ("午後", "施設l1", 500), ("夜", "施設s1", 10000)]
+    assert plan.total_saving == 12500
+
+
+def test_uses_plan_with_biggest_saving():
+    m = menu("s1", "stay")
+    m.plans = [Plan(id="a", menu_id="s1", name="スタンダード", list_price=18000, benefit_price=9900),
+               Plan(id="b", menu_id="s1", name="デラックス", list_price=30000, benefit_price=21000)]
+    night = built([m], []).items[-1]
+    assert (night.plan_name, night.list_price, night.price, night.saving) == ("デラックス", 30000, 21000, 9000)
+
+
+def test_saving_rate():
+    item = built([menu("s1", "stay", price=9900, list_price=18000)], []).items[-1]
+    assert item.saving_rate == 45
+
+
+def test_explain_by_rule_mentions_total_saving():
+    plan = built([menu("s1", "stay", price=21000, list_price=30000)], [])
+    assert day_plan.explain_by_rule(plan).endswith("に泊まるプランです。合計で9,000円お得です。")

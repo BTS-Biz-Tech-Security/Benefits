@@ -1,5 +1,7 @@
 """検索結果の施設と周辺スポットから、1日プラン（午前・昼・午後・夜）を組み立てる。
 
+各枠には、同じエリア・同じカテゴリの施設のうち、お得額（定価 − 福利厚生価格）が最大のものを入れる。
+
 組み立て（build_day_plan）は DB も AI も使わない純粋な関数。説明文は AI のキーがあれば AI、なければ決まった文の型。
 画面は持たない（画面は ui/day_plan.py）。
 """
@@ -9,9 +11,9 @@ from dataclasses import dataclass
 from typing import Any, Optional, cast
 
 from db import table
-from models import Menu
+from models import Menu, Plan
 from nl_search import MODEL, llm_api_key
-from search import list_areas, min_benefit_price
+from search import list_areas
 
 # (枠, 入れるカテゴリ)。この順に並べる
 SLOTS = [("午前", "leisure"), ("昼", "meal"), ("午後", "leisure"), ("夜", "stay")]
@@ -41,8 +43,19 @@ class PlanItem:
     name: str
     category: str
     description: Optional[str] = None
-    price: Optional[int] = None  # 福利厚生の最安価格。周辺スポットと自由時間は None
     url: Optional[str] = None
+    # 福利厚生の施設だけに入る値（お得額が最大の料金プランのもの）。周辺スポットと自由時間は None
+    plan_name: Optional[str] = None
+    list_price: Optional[int] = None
+    price: Optional[int] = None  # 福利厚生価格
+    saving: Optional[int] = None  # お得額（定価 − 福利厚生価格）
+
+    @property
+    def saving_rate(self) -> Optional[int]:
+        """お得額の割合（%、四捨五入）。"""
+        if not self.saving or not self.list_price:
+            return None
+        return round(self.saving * 100 / self.list_price)
 
 
 @dataclass
@@ -54,6 +67,21 @@ class DayPlan:
     total_price: Optional[int]
     explanation: str = ""
 
+    @property
+    def total_saving(self) -> int:
+        """福利厚生の施設のお得額の合計。"""
+        return sum(i.saving or 0 for i in self.items)
+
+
+def best_saving_plan(menu: Menu) -> Optional[Plan]:
+    """お得額が最大の料金プラン（同額なら福利厚生価格が安いほう）。プランがなければ None。"""
+    return min(menu.plans, key=lambda p: (p.benefit_price - p.list_price, p.benefit_price), default=None)
+
+
+def _saving(menu: Menu) -> int:
+    plan = best_saving_plan(menu)
+    return plan.list_price - plan.benefit_price if plan else -1
+
 
 def plan_area_id(menus: list[Menu]) -> Optional[str]:
     """プランのエリア。area_id がある最上位の施設のエリア。なければ None。"""
@@ -61,7 +89,10 @@ def plan_area_id(menus: list[Menu]) -> Optional[str]:
 
 
 def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str) -> Optional[DayPlan]:
-    """検索結果の施設（順位順）と周辺スポットから、午前・昼・午後・夜のプランを組む。"""
+    """検索結果の施設（順位順）と周辺スポットから、午前・昼・午後・夜のプランを組む。
+
+    施設は、お得額が最大のもの（同額なら検索結果で上位のもの）を選ぶ。
+    """
     area_id = plan_area_id(menus)
     if area_id is None:
         return None
@@ -69,10 +100,19 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str) -> Opti
     used: set[str] = set()
     items: list[PlanItem] = []
     for slot, category in SLOTS:
-        menu = next((m for m in candidates if m.category == category and m.id not in used), None)
-        if menu is not None:
+        fits = [m for m in candidates if m.category == category and m.id not in used]
+        if fits:
+            # max は同じ値なら先に出たもの（検索結果で上位）を返す
+            menu = max(fits, key=_saving)
             used.add(menu.id)
-            items.append(PlanItem(slot, "benefit", menu.name, category, menu.description, min_benefit_price(menu)))
+            plan = best_saving_plan(menu)
+            items.append(PlanItem(
+                slot, "benefit", menu.name, category, menu.description,
+                plan_name=plan.name if plan else None,
+                list_price=plan.list_price if plan else None,
+                price=plan.benefit_price if plan else None,
+                saving=plan.list_price - plan.benefit_price if plan else None,
+            ))
             continue
         if category == "stay":
             # 周辺スポットには宿泊がないので、夜の枠は出さない（日帰り）
@@ -97,24 +137,33 @@ def explain_by_rule(plan: DayPlan) -> str:
     prefix = f"{plan.area_name}で、" if plan.area_name else ""
     head = prefix + "、".join(f"{i.slot}は{i.name}" for i in plan.items if i.slot != NIGHT)
     if plan.day_trip:
-        return f"{head}を楽しむ日帰りのプランです。"
-    night = next(i for i in plan.items if i.slot == NIGHT)
-    return f"{head}、夜は{night.name}に泊まるプランです。"
+        text = f"{head}を楽しむ日帰りのプランです。"
+    else:
+        night = next(i for i in plan.items if i.slot == NIGHT)
+        text = f"{head}、夜は{night.name}に泊まるプランです。"
+    if plan.total_saving > 0:
+        text += f"合計で{plan.total_saving:,}円お得です。"
+    return text
 
 
 def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
     from openai import OpenAI
 
-    lines = "\n".join(f"- {i.slot}：{i.name}（{KIND_LABELS[i.kind]}）{i.description or ''}" for i in plan.items)
+    lines = "\n".join(
+        f"- {i.slot}：{i.name}（{KIND_LABELS[i.kind]}）{i.description or ''}"
+        + (f" 定価{i.list_price:,}円→福利厚生{i.price:,}円（{i.saving:,}円お得）" if i.saving else "")
+        for i in plan.items
+    )
     prompt = (
         "あなたは企業の福利厚生サービスに詳しい旅行アドバイザーです。"
         "次の1日プランについて、利用者の希望に照らして、なぜこの組み合わせがよいかを2〜3文で説明してください。\n"
         "- プランに含まれる場所以外の施設や店の名前を出さないこと\n"
         "- 「自由時間」の枠は、その時間の過ごし方に一般的な言葉で触れる程度にすること\n"
+        "- お得額があれば、合計でいくらお得かに触れること\n"
         "- 説明文だけを出力すること\n\n"
         f"エリア：{plan.area_name}\n"
         + ("宿泊：なし（日帰り）\n" if plan.day_trip else "")
-        + f"プラン：\n{lines}\n\n利用者の希望：{request_text}"
+        + f"プラン：\n{lines}\n合計のお得額：{plan.total_saving:,}円\n\n利用者の希望：{request_text}"
     )
     response = OpenAI(api_key=api_key).chat.completions.create(
         model=MODEL,
