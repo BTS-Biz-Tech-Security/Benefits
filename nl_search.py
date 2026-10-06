@@ -63,34 +63,38 @@ def normalize_conditions(raw: Any, today: Optional[datetime.date] = None) -> dic
 
     # ② 人数・予算: 1以上の整数にできるものだけ使う
     people = _to_positive_int(conditions.get("people"))
-    budget = _budget_per_night(conditions, people)
+    budget = _budget_per_person_per_night(conditions, people)
     return {"stay_date": stay_date, "people": people, "budget": budget}
 
 
-def _budget_per_night(conditions: dict[str, Any], people: Optional[int]) -> Optional[int]:
-    """予算を「1泊・全員分」の金額にそろえる。料金プランの金額が1泊単位なので、それと比べられる形にする。
+def _budget_per_person_per_night(conditions: dict[str, Any], people: Optional[int]) -> Optional[int]:
+    """宿代の予算を「1泊・1人あたり」の金額にそろえる。宿泊の料金プランを1人あたりの金額として扱うので、それと比べられる形にする。
 
-    計算は AI に任せず、ここで行う。AI からは、金額・1人あたりか・1泊あたりか・泊数を受け取る。
-    - 1人あたりなら、人数を掛ける（人数が分からなければ決められないので None）
+    計算は AI に任せず、ここで行う。AI（または簡易な読み取り）からは、金額・1人あたりか・1泊あたりか・泊数を受け取る。
+    - 全員分の金額なら、人数で割る（人数が分からなければ決められないので None）
     - 旅行全体の金額なら、泊数で割る（泊数が分からなければ1泊とみなす）
     """
-    # ① 以前の形（budget に合計金額が入っている）なら、そのまま使う
-    if "budget_amount" not in conditions:
-        return _to_positive_int(conditions.get("budget"))
-
-    amount = _to_positive_int(conditions.get("budget_amount"))
+    # ① 金額を取り出す。以前の形（budget に金額だけ）は「1泊・全員分」として扱う
+    if "budget_amount" in conditions:
+        amount = _to_positive_int(conditions.get("budget_amount"))
+        per_person = bool(conditions.get("budget_per_person"))
+        per_night = bool(conditions.get("budget_per_night"))
+    else:
+        amount = _to_positive_int(conditions.get("budget"))
+        per_person = False
+        per_night = True
     if amount is None:
         return None
 
-    # ② 1人あたりなら、人数を掛ける
-    if conditions.get("budget_per_person"):
+    # ② 全員分の金額なら、人数で割る
+    if not per_person:
         if people is None:
             return None
-        amount = amount * people
+        amount = amount // people
 
     # ③ 旅行全体の金額なら、泊数で割る
     nights = _to_positive_int(conditions.get("nights")) or 1
-    if not conditions.get("budget_per_night"):
+    if not per_night:
         amount = amount // nights
     return amount
 
@@ -176,12 +180,18 @@ def parse_with_rules(plan_text: str) -> dict[str, Any]:
     people_match = re.search(r"(\d+)\s*人", text)
     if people_match:
         raw["people"] = people_match.group(1)
+    nights_match = re.search(r"(\d+)\s*泊", text)
+    if nights_match:
+        raw["nights"] = nights_match.group(1)
     man_yen_match = re.search(r"(\d+(?:\.\d+)?)\s*万円", text)  # 「10万円」「1.5万円」
     yen_match = re.search(r"([\d,]+)\s*円", text)  # 「30,000円」
     if man_yen_match:
-        raw["budget"] = int(float(man_yen_match.group(1)) * 10000)
+        raw["budget_amount"] = int(float(man_yen_match.group(1)) * 10000)
     elif yen_match:
-        raw["budget"] = yen_match.group(1).replace(",", "")
+        raw["budget_amount"] = yen_match.group(1).replace(",", "")
+    # 「1人あたり」「ひとり」があれば1人あたりの金額、「1泊」があれば1泊あたりの金額とみなす
+    raw["budget_per_person"] = bool(re.search(r"(1人|一人|ひとり)(あたり|当たり|1泊)", text))
+    raw["budget_per_night"] = "1泊" in text
 
     return {"summary": "", "conditions": raw, "keywords": keywords}
 
@@ -189,7 +199,7 @@ def parse_with_rules(plan_text: str) -> dict[str, Any]:
 def parse_plan(plan_text: str, focus: str = SEARCH_FOCUS_OPTIONS[0], today: Optional[datetime.date] = None) -> dict[str, Any]:
     """休日プランの文章から {summary, conditions, keywords, used_ai} を返す。
 
-    conditions は {stay_date: date|None, people: int|None, budget: int|None}。budget は「1泊・全員分」の金額。
+    conditions は {stay_date: date|None, people: int|None, budget: int|None}。budget は宿代の予算で、「1泊・1人あたり」の金額。
     keywords は [{keyword, category, reason}]。AIの返答が JSON として読めないときは json.JSONDecodeError を送出する。
     """
     # ① AI があれば AI、なければ簡易なルールで読み取る

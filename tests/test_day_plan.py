@@ -216,7 +216,7 @@ def test_saving_rate():
 
 def test_explain_by_rule_mentions_total_saving():
     plan = built([menu("s1", "stay", price=21000, list_price=30000)], [])
-    assert day_plan.explain_by_rule(plan).endswith("に泊まるプランです。合計で9,000円お得です。")
+    assert day_plan.explain_by_rule(plan).endswith("に泊まるプランです。1人あたり合計で9,000円お得です。")
 
 
 def test_marks_items_over_budget():
@@ -236,7 +236,7 @@ def test_explain_by_rule_mentions_over_budget():
     plan = build_day_plan([menu("s1", "stay", price=28800, list_price=48000)], [], "箱根", budget=20000)
     assert plan is not None
     assert day_plan.explain_by_rule(plan) == (
-        "箱根で、午前は自由時間、昼は自由時間、午後は自由時間、夜は施設s1に泊まるプランです。合計で19,200円お得です。"
+        "箱根で、午前は自由時間、昼は自由時間、午後は自由時間、夜は施設s1に泊まるプランです。1人あたり合計で19,200円お得です。"
         "夜の施設s1は宿代の予算を8,800円超えますが、定価より19,200円お得です。")
 
 

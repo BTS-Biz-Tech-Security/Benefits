@@ -79,7 +79,7 @@ def _render_plans_and_conditions(menu: Menu) -> None:
     for plan in menu.plans:
         with st.container(border=True):
             st.markdown(f"**{plan.name}**")
-            details = [f"部屋 {plan.room_type or '—'}", f"食事 {plan.meal or '—'}", f"{plan.adults or 2}名・{plan.nights}泊の料金"]
+            details = [f"部屋 {plan.room_type or '—'}", f"食事 {plan.meal or '—'}", f"{plan.nights}泊・1人あたりの料金"]
             st.caption(" ／ ".join(details))
             saving = plan.list_price - plan.benefit_price
             if saving > 0:

@@ -67,9 +67,9 @@ class DayPlan:
     area_name: str
     items: list[PlanItem]
     day_trip: bool  # 宿泊がなく日帰りのとき True
-    total_price: Optional[int]  # 福利厚生価格の合計
+    total_price: Optional[int]  # 福利厚生価格の合計（料金はすべて1人あたりとして扱うので、1人あたりの合計）
     explanation: str = ""
-    budget: Optional[int] = None  # 宿代の予算（1泊・全員分）。宿泊施設にだけ当てはめる
+    budget: Optional[int] = None  # 宿代の予算（1泊・1人あたり）。宿泊施設にだけ当てはめる
     alternative: bool = False  # 利用者が挙げたエリア以外の代替案のとき True
 
     @property
@@ -214,7 +214,7 @@ def explain_by_rule(plan: DayPlan) -> str:
 
     # ④ お得額の合計と、予算を超える施設
     if plan.total_saving > 0:
-        text += f"合計で{plan.total_saving:,}円お得です。"
+        text += f"1人あたり合計で{plan.total_saving:,}円お得です。"
     for item in plan.items:
         if item.over_budget:
             text += f"{item.slot}の{item.name}は宿代の予算を{item.over_budget:,}円超えますが、定価より{item.saving or 0:,}円お得です。"
@@ -239,7 +239,7 @@ def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
     rules = [
         "プランに含まれる場所以外の施設や店の名前を出さないこと",
         "「自由時間」の枠は、その時間の過ごし方に一般的な言葉で触れる程度にすること",
-        "お得額があれば、合計でいくらお得かに触れること",
+        "金額はすべて1人あたり。お得額があれば、1人あたり合計でいくらお得かに触れること",
         "宿代の予算を超える宿があれば、超える額とお得額の両方を示し、お得感の大きさを伝えること。お得額が超える額より小さいときは、そう正直に書くこと",
     ]
     if plan.alternative:
@@ -251,11 +251,11 @@ def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
     prompt += "".join(f"- {rule}\n" for rule in rules)
     prompt += f"\nエリア：{plan.area_name}\n"
     if plan.budget:
-        prompt += f"宿代の予算（1泊・全員分）：{plan.budget:,}円\n"
+        prompt += f"宿代の予算（1泊・1人あたり）：{plan.budget:,}円\n"
     if plan.day_trip:
         prompt += "宿泊：なし（日帰り）\n"
     prompt += "プラン：\n" + "\n".join(lines) + "\n"
-    prompt += f"合計のお得額：{plan.total_saving:,}円\n\n利用者の希望：{request_text}"
+    prompt += f"合計のお得額（1人あたり）：{plan.total_saving:,}円\n\n利用者の希望：{request_text}"
 
     # ③ AI に送る
     response = OpenAI(api_key=api_key).chat.completions.create(

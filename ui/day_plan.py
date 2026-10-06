@@ -43,7 +43,7 @@ def render_day_plan(plan: DayPlan) -> None:
             title += "　:blue-badge[ご希望以外のエリアからの代替案]"
         col_title.markdown(title)
         if plan.total_saving > 0:
-            col_total.metric("合計のお得額", f"{plan.total_saving:,}円お得")
+            col_total.metric("合計のお得額（1人あたり）", f"{plan.total_saving:,}円お得")
 
         # ② 枠ごとに「時間帯 ｜ 場所 ｜ 金額 ｜ 詳細を見る」の4列で並べる
         for item in plan.items:
@@ -70,6 +70,6 @@ def render_day_plan(plan: DayPlan) -> None:
         if plan.day_trip:
             st.caption("宿泊の施設が見つからなかったため、日帰りのプランです。")
         if plan.total_price is not None:
-            st.caption(f"福利厚生価格の合計：{plan.total_price:,}円")
+            st.caption(f"福利厚生価格の合計：{plan.total_price:,}円（1人あたり）")
         if plan.explanation:
             st.markdown(plan.explanation)

@@ -40,7 +40,7 @@ def format_conditions(conditions: dict[str, Any]) -> str:
     if conditions["people"]:
         people_text = f"{conditions['people']}人"
     if conditions["budget"]:
-        budget_text = f"{conditions['budget']:,}円（1泊・全員分）"
+        budget_text = f"{conditions['budget']:,}円（1泊・1人あたり）"
     return f"宿泊日：{date_text} ・ 人数：{people_text} ・ 宿代の予算：{budget_text}"
 
 
@@ -56,7 +56,7 @@ def _render_menu_list(menus: list[Menu], key_prefix: str, budget: Optional[int] 
     """施設の一覧をカードで並べる。両方のタブで使う。「詳細を見る」ボタンで詳細画面に移る。
 
     key_prefix はボタンの名前の頭に付ける文字。同じ施設が両方のタブに出ても、ボタンの名前が重ならないようにする。
-    budget（宿代の予算。1泊・全員分）を渡すと、1日プランと同じく、予算を超える宿に「予算＋〇〇円」のバッジを付ける。
+    budget（宿代の予算。1泊・1人あたり）を渡すと、1日プランと同じく、予算を超える宿に「予算＋〇〇円」のバッジを付ける。
 
     TODO(results_page.py): この一覧は仮のもの。一覧の表示と並び替えは ui/results_page.py（じゅんぺいさん担当）の役割なので、
     results_page.py ができたら、この関数の中身をその表示（render_results）の呼び出しに置き換える。
@@ -153,7 +153,7 @@ def _condition_tab(tenant_id: str) -> None:
         col_date, col_people, col_budget = st.columns(3)
         col_date.date_input("宿泊日", value=datetime.date.today() + datetime.timedelta(days=14), format="YYYY/MM/DD")
         people = col_people.number_input("人数", min_value=1, value=2, step=1)
-        budget = col_budget.number_input("宿代の予算（1泊・全員分の円。0なら上限なし）", min_value=0, value=0, step=1000)
+        budget = col_budget.number_input("宿代の予算（1泊・1人あたりの円。0なら上限なし）", min_value=0, value=0, step=1000)
 
         if st.form_submit_button("検索", type="primary", icon=":material/search:"):
             # ① 「すべて」と「0円」は、条件なし（None）にする
