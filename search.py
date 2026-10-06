@@ -49,6 +49,9 @@ def filter_menus(menus: list[Menu], *, people: Optional[int] = None, budget: Opt
                 continue
         result.append(menu)
 
+    # TODO(ranking.py): ここから下の並べ替えは仮のもの。並び順は ranking.py（じゅんぺいさん担当）が決める役割なので、
+    # ranking.py ができたら外し、絞り込んだ result をそのまま返す。
+    # 並びが変わっても day_plan.py は受け取った順番に従うので、day_plan.py の変更は要らない。
     def sort_key(m: Menu):
         price = min_benefit_price(m)
         return (-m.keyword_hits, price is None, price or 0, m.name)

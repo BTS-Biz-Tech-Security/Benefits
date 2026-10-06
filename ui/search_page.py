@@ -43,6 +43,8 @@ def _render_results(menus: list[Menu], plans: list[DayPlan]) -> None:
     # エリアごとのプランを、検索結果で上位のエリアから縦に並べる
     for plan in plans:
         render_day_plan(plan)
+    # TODO(results_page.py): ここから下の施設一覧は仮のもの。一覧の表示と並び替えは ui/results_page.py（じゅんぺいさん担当）の役割なので、
+    # results_page.py ができたら、この折りたたみをその表示（render_results）の呼び出しに置き換える。
     with st.expander(f"検索結果の施設一覧（{len(menus)}件）"):
         for m in menus:
             price = min_benefit_price(m)
