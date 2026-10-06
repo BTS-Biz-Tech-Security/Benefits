@@ -146,7 +146,7 @@ def render() -> None:
     user = require_login()
     with st.container(border=True):
         st.subheader(":material/search: 検索")
-        tab_text, tab_condition = st.tabs([":material/chat: 文章で探す", ":material/tune: 条件で探す"])
+        tab_text, tab_condition = st.tabs([":material/chat: 1日プラン提案", ":material/tune: 施設を検索"])
         with tab_text:
             _text_tab(user.tenant_id)
         with tab_condition:
