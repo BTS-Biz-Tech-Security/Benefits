@@ -87,10 +87,10 @@ def _text_tab(tenant_id: str) -> None:
         if parsed.get("summary"):
             st.write(parsed["summary"])
         st.markdown(format_conditions(parsed["conditions"]))
-        st.markdown("**使用する検索キーワード**")
-        for item in parsed.get("keywords", []):
-            st.markdown(f"**{item.get('keyword', '')}**（{item.get('category', '')}）　:gray[{item.get('reason', '')}]")
         _render_results(result["menus"], result["plan"])
+        with st.expander(f"使用した検索キーワード（{len(parsed.get('keywords', []))}個）"):
+            for item in parsed.get("keywords", []):
+                st.markdown(f"**{item.get('keyword', '')}**（{item.get('category', '')}）　:gray[{item.get('reason', '')}]")
 
 
 def _condition_tab(tenant_id: str) -> None:
