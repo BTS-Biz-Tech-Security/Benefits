@@ -1,19 +1,21 @@
 """検索画面。「文章で探す」と「条件で探す」の2つのタブ。
 
-読み取りは nl_search.py、施設の検索は search.py に任せ、ここは入力と表示だけを持つ。
+読み取りは nl_search.py、施設の検索は search.py、1日プランの組み立ては day_plan.py に任せ、ここは入力と表示だけを持つ。
 """
 from __future__ import annotations
 
 import datetime
 import json
-from typing import Any
+from typing import Any, Optional
 
 import streamlit as st
 
+from day_plan import DayPlan, make_day_plan
 from models import CATEGORIES, Menu
 from nl_search import SEARCH_FOCUS_OPTIONS, ai_available, parse_plan
 from search import list_areas, min_benefit_price, search_menus
 from session import require_login
+from ui.day_plan import render_day_plan
 
 WEEKDAY_NAMES = ["月", "火", "水", "木", "金", "土", "日"]
 ALL = "すべて"
@@ -34,18 +36,20 @@ def format_conditions(conditions: dict[str, Any]) -> str:
     return f"宿泊日：{date_text} ・ 人数：{people_text} ・ 予算：{budget_text}"
 
 
-def _render_results(menus: list[Menu]) -> None:
-    st.markdown(f"**見つかった施設：{len(menus)}件**")
+def _render_results(menus: list[Menu], plan: Optional[DayPlan]) -> None:
     if not menus:
         st.info("条件に合う施設が見つかりませんでした。条件を減らして探してください。")
         return
-    for m in menus:
-        price = min_benefit_price(m)
-        price_text = f"福利厚生価格 {price:,}円〜" if price is not None else "価格未登録"
-        with st.container(border=True):
-            st.markdown(f"**{m.name}**　:gray[{CATEGORIES.get(m.category, m.category)}・{price_text}]")
-            if m.description:
-                st.caption(m.description)
+    if plan is not None:
+        render_day_plan(plan)
+    with st.expander(f"検索結果の施設一覧（{len(menus)}件）"):
+        for m in menus:
+            price = min_benefit_price(m)
+            price_text = f"福利厚生価格 {price:,}円〜" if price is not None else "価格未登録"
+            with st.container(border=True):
+                st.markdown(f"**{m.name}**　:gray[{CATEGORIES.get(m.category, m.category)}・{price_text}]")
+                if m.description:
+                    st.caption(m.description)
 
 
 def _text_tab(tenant_id: str) -> None:
@@ -62,7 +66,7 @@ def _text_tab(tenant_id: str) -> None:
         if not plan_text.strip():
             st.warning("休日プランを入力してください。")
         else:
-            with st.spinner("福利厚生メニューから探しています..."):
+            with st.spinner("福利厚生メニューから探して、1日プランを組み立てています..."):
                 try:
                     parsed = parse_plan(plan_text, focus)
                 except json.JSONDecodeError:
@@ -71,11 +75,13 @@ def _text_tab(tenant_id: str) -> None:
                     c = parsed["conditions"]
                     menus = search_menus(tenant_id, people=c["people"], budget=c["budget"],
                                          keywords=[k.get("keyword", "") for k in parsed["keywords"]])
+                    plan = make_day_plan(tenant_id, menus, plan_text)
                     # 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
-                    st.session_state["search_text_result"] = {"parsed": parsed, "menus": menus}
+                    st.session_state["search_text_result"] = {"parsed": parsed, "menus": menus, "plan": plan}
 
     if "search_text_result" in st.session_state:
-        parsed = st.session_state["search_text_result"]["parsed"]
+        result = st.session_state["search_text_result"]
+        parsed = result["parsed"]
         st.divider()
         st.caption("こう読み取りました。違うときは「条件で探す」から検索してください。")
         if parsed.get("summary"):
@@ -84,7 +90,7 @@ def _text_tab(tenant_id: str) -> None:
         st.markdown("**使用する検索キーワード**")
         for item in parsed.get("keywords", []):
             st.markdown(f"**{item.get('keyword', '')}**（{item.get('category', '')}）　:gray[{item.get('reason', '')}]")
-        _render_results(st.session_state["search_text_result"]["menus"])
+        _render_results(result["menus"], result["plan"])
 
 
 def _condition_tab(tenant_id: str) -> None:
@@ -100,16 +106,22 @@ def _condition_tab(tenant_id: str) -> None:
         budget = col_budget.number_input("予算（円・0なら上限なし）", min_value=0, value=0, step=1000)
 
         if st.form_submit_button("検索", type="primary", icon=":material/search:"):
-            st.session_state["search_condition_result"] = search_menus(
-                tenant_id,
-                area_code=areas.get(area),
-                category=None if category == ALL else category,
-                people=int(people),
-                budget=int(budget) or None,
-            )
+            with st.spinner("福利厚生メニューから探して、1日プランを組み立てています..."):
+                menus = search_menus(
+                    tenant_id,
+                    area_code=areas.get(area),
+                    category=None if category == ALL else category,
+                    people=int(people),
+                    budget=int(budget) or None,
+                )
+                budget_text = f"{int(budget):,}円" if budget else "上限なし"
+                request_text = f"エリア：{area}・カテゴリ：{CATEGORIES.get(category) or category}・人数：{int(people)}人・予算：{budget_text}"
+                # 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
+                st.session_state["search_condition_result"] = {"menus": menus, "plan": make_day_plan(tenant_id, menus, request_text)}
 
     if "search_condition_result" in st.session_state:
-        _render_results(st.session_state["search_condition_result"])
+        result = st.session_state["search_condition_result"]
+        _render_results(result["menus"], result["plan"])
 
 
 def render() -> None:
