@@ -36,7 +36,7 @@ def format_conditions(conditions: dict[str, Any]) -> str:
     if conditions["people"]:
         people_text = f"{conditions['people']}人"
     if conditions["budget"]:
-        budget_text = f"{conditions['budget']:,}円"
+        budget_text = f"{conditions['budget']:,}円（1泊・全員分）"
     return f"宿泊日：{date_text} ・ 人数：{people_text} ・ 予算：{budget_text}"
 
 
@@ -120,7 +120,7 @@ def _condition_tab(tenant_id: str) -> None:
         col_date, col_people, col_budget = st.columns(3)
         col_date.date_input("宿泊日", value=datetime.date.today() + datetime.timedelta(days=14), format="YYYY/MM/DD")
         people = col_people.number_input("人数", min_value=1, value=2, step=1)
-        budget = col_budget.number_input("予算（円・0なら上限なし）", min_value=0, value=0, step=1000)
+        budget = col_budget.number_input("予算（1泊・全員分の円。0なら上限なし）", min_value=0, value=0, step=1000)
 
         if st.form_submit_button("検索", type="primary", icon=":material/search:"):
             # ① 「すべて」と「0円」は、条件なし（None）にする

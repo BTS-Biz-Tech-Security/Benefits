@@ -63,8 +63,36 @@ def normalize_conditions(raw: Any, today: Optional[datetime.date] = None) -> dic
 
     # ② 人数・予算: 1以上の整数にできるものだけ使う
     people = _to_positive_int(conditions.get("people"))
-    budget = _to_positive_int(conditions.get("budget"))
+    budget = _budget_per_night(conditions, people)
     return {"stay_date": stay_date, "people": people, "budget": budget}
+
+
+def _budget_per_night(conditions: dict[str, Any], people: Optional[int]) -> Optional[int]:
+    """予算を「1泊・全員分」の金額にそろえる。料金プランの金額が1泊単位なので、それと比べられる形にする。
+
+    計算は AI に任せず、ここで行う。AI からは、金額・1人あたりか・1泊あたりか・泊数を受け取る。
+    - 1人あたりなら、人数を掛ける（人数が分からなければ決められないので None）
+    - 旅行全体の金額なら、泊数で割る（泊数が分からなければ1泊とみなす）
+    """
+    # ① 以前の形（budget に合計金額が入っている）なら、そのまま使う
+    if "budget_amount" not in conditions:
+        return _to_positive_int(conditions.get("budget"))
+
+    amount = _to_positive_int(conditions.get("budget_amount"))
+    if amount is None:
+        return None
+
+    # ② 1人あたりなら、人数を掛ける
+    if conditions.get("budget_per_person"):
+        if people is None:
+            return None
+        amount = amount * people
+
+    # ③ 旅行全体の金額なら、泊数で割る
+    nights = _to_positive_int(conditions.get("nights")) or 1
+    if not conditions.get("budget_per_night"):
+        amount = amount // nights
+    return amount
 
 
 def _to_positive_int(value: Any) -> Optional[int]:
@@ -101,10 +129,16 @@ def _build_prompt(plan_text: str, focus: str) -> str:
         "- プランから宿泊日（利用日）・人数・予算を読み取り、conditionsに入れること。"
         "プランに書かれていない項目や、「夏休み」「週末」「安めで」のように1つの値に決められないあいまいな書き方の項目はnullとし、推測で埋めないこと\n"
         "- 宿泊日は「12月26日」のように月日が書かれている場合だけ、月日をMM-DD形式（例：03-03）で入れること。年は入れないこと。「来週の土曜日」のように曜日だけで書かれている場合はnullとすること\n"
-        "- 人数と予算（円）は整数で入れること。予算は全体の金額とし、1人あたりで書かれている場合は人数を掛けた合計にすること（泊数は掛けないこと）\n"
+        "- 人数は整数で入れること\n"
+        "- 予算は計算せず、書かれている金額（円）をそのまま budget_amount に整数で入れること（「1万円」なら10000）。"
+        "その金額が1人あたりなら budget_per_person を true、1泊あたりなら budget_per_night を true にすること"
+        "（例：「1人1泊1万円」→ budget_amount 10000、budget_per_person true、budget_per_night true）。"
+        "泊数が書かれていれば nights に整数で入れること\n"
         "- 出力は次のJSON形式のみとすること: "
         '{"summary": "施設選びの条件の要約（1文）", '
-        '"conditions": {"stay_date": "MM-DD または null", "people": 人数 または null, "budget": 予算の金額 または null}, '
+        '"conditions": {"stay_date": "MM-DD または null", "people": 人数 または null, '
+        '"budget_amount": 書かれている予算の金額 または null, "budget_per_person": true/false, "budget_per_night": true/false, '
+        '"nights": 泊数 または null}, '
         '"keywords": [{"keyword": "検索キーワード", "category": "分類", "reason": "このキーワードでどんな施設が見つかるか（1文）"}]}\n\n'
         "理想の休日プラン: " + plan_text
     )
@@ -155,7 +189,7 @@ def parse_with_rules(plan_text: str) -> dict[str, Any]:
 def parse_plan(plan_text: str, focus: str = SEARCH_FOCUS_OPTIONS[0], today: Optional[datetime.date] = None) -> dict[str, Any]:
     """休日プランの文章から {summary, conditions, keywords, used_ai} を返す。
 
-    conditions は {stay_date: date|None, people: int|None, budget: int|None}。
+    conditions は {stay_date: date|None, people: int|None, budget: int|None}。budget は「1泊・全員分」の金額。
     keywords は [{keyword, category, reason}]。AIの返答が JSON として読めないときは json.JSONDecodeError を送出する。
     """
     # ① AI があれば AI、なければ簡易なルールで読み取る
