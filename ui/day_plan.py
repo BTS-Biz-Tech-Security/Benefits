@@ -39,23 +39,21 @@ def render_day_plan(plan: DayPlan) -> None:
         if plan.total_saving > 0:
             col_total.metric("合計のお得額", f"{plan.total_saving:,}円お得")
 
-        # ② 枠ごとに「時間帯 ｜ 場所 ｜ 金額」の3列で並べる
+        # ② 枠ごとに「時間帯 ｜ 場所 ｜ 金額 ｜ 詳細を見る」の4列で並べる
         for item in plan.items:
-            col_slot, col_name, col_price = st.columns([1, 4, 5], vertical_alignment="center")
+            col_slot, col_name, col_price, col_button = st.columns([1, 4, 5, 2], vertical_alignment="center")
             col_slot.markdown(f"**{item.slot}**")
             name = item.name
             if item.url:
                 name = f"[{item.name}]({item.url})"  # 周辺スポットにリンクがあれば、名前をリンクにする
             if item.kind == "benefit":
-                # 福利厚生の施設は、名前を押すと詳細画面に移る
-                with col_name:
-                    if item.menu_id:
-                        st.button(item.name, key=f"day-plan-{plan.area_id}-{item.slot}-{item.menu_id}", type="tertiary",
-                                  on_click=open_detail, args=(item.menu_id,))
-                    else:
-                        st.markdown(item.name)
-                    st.caption(item.plan_name or "")
+                col_name.markdown(item.name)
+                col_name.caption(item.plan_name or "")
                 col_price.markdown(_price_text(item))
+                # 福利厚生の施設は、「詳細を見る」ボタンで詳細画面に移れる
+                if item.menu_id:
+                    col_button.button("詳細を見る", key=f"day-plan-{plan.area_id}-{item.slot}-{item.menu_id}",
+                                      icon=":material/arrow_forward:", on_click=open_detail, args=(item.menu_id,))
             elif item.kind == "spot":
                 col_name.markdown(name)
                 col_price.markdown(f":gray[{KIND_LABELS[item.kind]}]")

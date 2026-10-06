@@ -53,7 +53,7 @@ NOT_FOUND = "条件に合う施設が見つかりませんでした。条件を�
 
 
 def _render_menu_list(menus: list[Menu], key_prefix: str) -> None:
-    """施設の一覧をカードで並べる。両方のタブで使う。施設名を押すと詳細画面に移る。
+    """施設の一覧をカードで並べる。両方のタブで使う。「詳細を見る」ボタンで詳細画面に移る。
 
     key_prefix はボタンの名前の頭に付ける文字。同じ施設が両方のタブに出ても、ボタンの名前が重ならないようにする。
 
@@ -64,11 +64,13 @@ def _render_menu_list(menus: list[Menu], key_prefix: str) -> None:
         price = min_benefit_price(menu)
         price_text = f"福利厚生価格 {price:,}円〜" if price is not None else "価格未登録"
         with st.container(border=True):
-            st.button(f"**{menu.name}**", key=f"{key_prefix}-{menu.id}", type="tertiary",
-                      icon=":material/arrow_forward:", on_click=open_detail, args=(menu.id,))
-            st.markdown(f":gray[{_category_label(menu.category)}・{price_text}]")
+            # 左に施設の情報、右に「詳細を見る」ボタン
+            col_info, col_button = st.columns([5, 1], vertical_alignment="center")
+            col_info.markdown(f"**{menu.name}**　:gray[{_category_label(menu.category)}・{price_text}]")
             if menu.description:
-                st.caption(menu.description)
+                col_info.caption(menu.description)
+            col_button.button("詳細を見る", key=f"{key_prefix}-{menu.id}", icon=":material/arrow_forward:",
+                              on_click=open_detail, args=(menu.id,))
 
 
 def _render_plans_and_list(menus: list[Menu], plans: list[DayPlan]) -> None:
