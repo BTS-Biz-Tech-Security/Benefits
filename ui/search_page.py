@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import datetime
 import json
-from typing import Any
+from typing import Any, Optional
 
 import streamlit as st
 
@@ -52,10 +52,11 @@ def _category_label(key: str) -> str:
 NOT_FOUND = "条件に合う施設が見つかりませんでした。条件を減らして探してください。"
 
 
-def _render_menu_list(menus: list[Menu], key_prefix: str) -> None:
+def _render_menu_list(menus: list[Menu], key_prefix: str, budget: Optional[int] = None) -> None:
     """施設の一覧をカードで並べる。両方のタブで使う。「詳細を見る」ボタンで詳細画面に移る。
 
     key_prefix はボタンの名前の頭に付ける文字。同じ施設が両方のタブに出ても、ボタンの名前が重ならないようにする。
+    budget（1泊・全員分）を渡すと、1日プランと同じく、予算を超える金額に「予算＋〇〇円」のバッジを付ける。
 
     TODO(results_page.py): この一覧は仮のもの。一覧の表示と並び替えは ui/results_page.py（じゅんぺいさん担当）の役割なので、
     results_page.py ができたら、この関数の中身をその表示（render_results）の呼び出しに置き換える。
@@ -69,7 +70,8 @@ def _render_menu_list(menus: list[Menu], key_prefix: str) -> None:
             plan_name = f"・{plan.name}" if plan else ""
             col_info.markdown(f"**{menu.name}**　:gray[{_category_label(menu.category)}{plan_name}]")
             if plan:
-                col_info.markdown(price_text(plan.list_price, plan.benefit_price))
+                over_budget = plan.benefit_price - budget if budget and plan.benefit_price > budget else None
+                col_info.markdown(price_text(plan.list_price, plan.benefit_price, over_budget))
             else:
                 col_info.caption("価格未登録")
             if menu.description:
@@ -78,7 +80,7 @@ def _render_menu_list(menus: list[Menu], key_prefix: str) -> None:
                               on_click=open_detail, args=(menu.id,))
 
 
-def _render_plans_and_list(menus: list[Menu], plans: list[DayPlan]) -> None:
+def _render_plans_and_list(menus: list[Menu], plans: list[DayPlan], budget: Optional[int]) -> None:
     """「1日プラン提案」タブの結果。1日プランを並べ、その下に施設一覧を折りたたんで置く。"""
     if not menus:
         st.info(NOT_FOUND)
@@ -87,7 +89,7 @@ def _render_plans_and_list(menus: list[Menu], plans: list[DayPlan]) -> None:
     for plan in plans:
         render_day_plan(plan)
     with st.expander(f"検索結果の施設一覧（{len(menus)}件）"):
-        _render_menu_list(menus, key_prefix="plan-tab")
+        _render_menu_list(menus, key_prefix="plan-tab", budget=budget)
 
 
 def _text_tab(tenant_id: str) -> None:
@@ -131,7 +133,7 @@ def _text_tab(tenant_id: str) -> None:
         if parsed.get("summary"):
             st.write(parsed["summary"])
         st.markdown(format_conditions(parsed["conditions"]))
-        _render_plans_and_list(result["menus"], result["plans"])
+        _render_plans_and_list(result["menus"], result["plans"], parsed["conditions"]["budget"])
         with st.expander(f"使用した検索キーワード（{len(parsed.get('keywords', []))}個）"):
             for item in parsed.get("keywords", []):
                 st.markdown(f"**{item.get('keyword', '')}**（{item.get('category', '')}）　:gray[{item.get('reason', '')}]")
@@ -160,16 +162,17 @@ def _condition_tab(tenant_id: str) -> None:
                 menus = search_menus(tenant_id, area_code=area_code, category=category_key,
                                      people=int(people), budget=budget_value)
                 # ③ 画面が再実行されても結果が消えないよう保存しておく
-                st.session_state["search_condition_result"] = {"menus": menus}
+                st.session_state["search_condition_result"] = {"menus": menus, "budget": budget_value}
 
     # ④ 検索結果の施設一覧だけを、折りたたまずに表示する
     if "search_condition_result" in st.session_state:
         menus = st.session_state["search_condition_result"]["menus"]
+        budget_value = st.session_state["search_condition_result"].get("budget")
         if not menus:
             st.info(NOT_FOUND)
         else:
             st.markdown(f"**見つかった施設：{len(menus)}件**")
-            _render_menu_list(menus, key_prefix="search-tab")
+            _render_menu_list(menus, key_prefix="search-tab", budget=budget_value)
 
 
 def render() -> None:
