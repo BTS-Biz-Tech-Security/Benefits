@@ -30,8 +30,8 @@ RULE_KEYWORDS = {
 }
 
 
-def _api_key() -> Optional[str]:
-    """secrets.toml の [llm] api_key。なければ None。"""
+def llm_api_key() -> Optional[str]:
+    """secrets.toml の [llm] api_key。なければ None。1日プランの説明文（day_plan.py）でも使う。"""
     try:
         return st.secrets.get("llm", {}).get("api_key")
     except FileNotFoundError:
@@ -39,7 +39,7 @@ def _api_key() -> Optional[str]:
 
 
 def ai_available() -> bool:
-    return bool(_api_key())
+    return bool(llm_api_key())
 
 
 def normalize_conditions(raw: Any, today: Optional[datetime.date] = None) -> dict[str, Any]:
@@ -138,7 +138,7 @@ def parse_plan(plan_text: str, focus: str = SEARCH_FOCUS_OPTIONS[0], today: Opti
     conditions は {stay_date: date|None, people: int|None, budget: int|None}。
     keywords は [{keyword, category, reason}]。AIの返答が JSON として読めないときは json.JSONDecodeError を送出する。
     """
-    api_key = _api_key()
+    api_key = llm_api_key()
     result = _parse_with_ai(plan_text, focus, api_key) if api_key else parse_with_rules(plan_text)
     result["keywords"] = _drop_numeric_keywords(result.get("keywords", []))
     result["conditions"] = normalize_conditions(result.get("conditions"), today)
