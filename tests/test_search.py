@@ -1,0 +1,22 @@
+"""search.py のテスト（DB を使わない部分）。"""
+from __future__ import annotations
+
+from models import Menu, Plan
+from search import filter_menus
+
+
+def menu(id: str, category: str, price: int) -> Menu:
+    plan = Plan(id=f"p-{id}", menu_id=id, name="plan", list_price=price, benefit_price=price)
+    return Menu(id=id, tenant_id="t", name=f"施設{id}", category=category, plans=[plan])
+
+
+def test_budget_filters_only_stays():
+    # 予算は宿代の上限なので、宿泊施設だけを絞り込む。食事・レジャーは予算で外さない
+    menus = [menu("s1", "stay", 30000), menu("s2", "stay", 15000), menu("m1", "meal", 25000), menu("l1", "leisure", 22000)]
+    kept = filter_menus(menus, budget=20000)
+    assert sorted(m.id for m in kept) == ["l1", "m1", "s2"]
+
+
+def test_no_budget_keeps_all():
+    menus = [menu("s1", "stay", 30000), menu("m1", "meal", 25000)]
+    assert sorted(m.id for m in filter_menus(menus)) == ["m1", "s1"]

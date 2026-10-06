@@ -49,7 +49,7 @@ def filter_menus(menus: list[Menu], *, people: Optional[int] = None, budget: Opt
     """人数・予算・キーワードで絞り込み、並べ替えて返す。
 
     - 人数: 定員（max_people）が人数以上、または定員が未設定の施設
-    - 予算: 福利厚生価格が予算以下のプランがある施設（予算を指定したときは、プランのない施設は外す）
+    - 予算: 宿代の上限（1泊・全員分）。宿泊施設だけに当てはめ、予算以下のプランがない宿は外す。食事・レジャーは予算で外さない
     - キーワード: 1つ以上含む施設。含む数の多い順、同数なら安い順
     """
     keywords = [k for k in keywords if k]
@@ -58,8 +58,8 @@ def filter_menus(menus: list[Menu], *, people: Optional[int] = None, budget: Opt
         # ① 人数: 定員が足りない施設を外す
         if people and menu.max_people is not None and menu.max_people < people:
             continue
-        # ② 予算: 予算内の料金プランが1つもない施設を外す
-        if budget:
+        # ② 予算（宿代の上限）: 予算内の料金プランが1つもない宿を外す
+        if budget and menu.category == "stay":
             prices = [plan.benefit_price for plan in menu.plans]
             if not prices or min(prices) > budget:
                 continue

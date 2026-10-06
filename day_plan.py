@@ -50,7 +50,7 @@ class PlanItem:
     list_price: Optional[int] = None  # 定価
     price: Optional[int] = None  # 福利厚生価格
     saving: Optional[int] = None  # お得額（定価 − 福利厚生価格）
-    over_budget: Optional[int] = None  # 予算を超える額。予算内か、予算の指定がなければ None
+    over_budget: Optional[int] = None  # 宿代の予算を超える額。宿泊施設だけ。予算内か、予算の指定がなければ None
 
     @property
     def saving_rate(self) -> Optional[int]:
@@ -69,7 +69,7 @@ class DayPlan:
     day_trip: bool  # 宿泊がなく日帰りのとき True
     total_price: Optional[int]  # 福利厚生価格の合計
     explanation: str = ""
-    budget: Optional[int] = None  # 1つの料金プランあたりの予算
+    budget: Optional[int] = None  # 宿代の予算（1泊・全員分）。宿泊施設にだけ当てはめる
     alternative: bool = False  # 利用者が挙げたエリア以外の代替案のとき True
 
     @property
@@ -145,7 +145,7 @@ def _benefit_item(slot: str, menu: Menu, budget: Optional[int]) -> PlanItem:
     item.list_price = plan.list_price
     item.price = plan.benefit_price
     item.saving = plan.list_price - plan.benefit_price
-    if budget and plan.benefit_price > budget:
+    if budget and menu.category == "stay" and plan.benefit_price > budget:
         item.over_budget = plan.benefit_price - budget
     return item
 
@@ -154,7 +154,8 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
                    area_id: Optional[str] = None, budget: Optional[int] = None) -> Optional[DayPlan]:
     """1つのエリアのプランを組む。area_id を省略すると、検索結果のいちばん上のエリアで組む。
 
-    予算を超える施設も選び、超える額を記録する（超えてもお得なことを、表示と説明文で伝えるため）。
+    宿代の予算を超える宿も選び、超える額を記録する（超えてもお得なことを、表示と説明文で伝えるため）。
+    予算は宿代の上限なので、食事・レジャーには当てはめない。
     DB も AI も使わない。
     """
     # ① エリアを決め、そのエリアの施設だけにする
@@ -216,7 +217,7 @@ def explain_by_rule(plan: DayPlan) -> str:
         text += f"合計で{plan.total_saving:,}円お得です。"
     for item in plan.items:
         if item.over_budget:
-            text += f"{item.slot}の{item.name}は予算を{item.over_budget:,}円超えますが、定価より{item.saving or 0:,}円お得です。"
+            text += f"{item.slot}の{item.name}は宿代の予算を{item.over_budget:,}円超えますが、定価より{item.saving or 0:,}円お得です。"
     return text
 
 
@@ -231,7 +232,7 @@ def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
         if item.saving:
             line += f" 定価{item.list_price:,}円→福利厚生{item.price:,}円（{item.saving:,}円お得）"
         if item.over_budget:
-            line += f" ※予算を{item.over_budget:,}円超える"
+            line += f" ※宿代の予算を{item.over_budget:,}円超える"
         lines.append(line)
 
     # ② 指示文を組み立てる
@@ -239,7 +240,7 @@ def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
         "プランに含まれる場所以外の施設や店の名前を出さないこと",
         "「自由時間」の枠は、その時間の過ごし方に一般的な言葉で触れる程度にすること",
         "お得額があれば、合計でいくらお得かに触れること",
-        "予算を超える施設があれば、超える額とお得額の両方を示し、お得感の大きさを伝えること。お得額が超える額より小さいときは、そう正直に書くこと",
+        "宿代の予算を超える宿があれば、超える額とお得額の両方を示し、お得感の大きさを伝えること。お得額が超える額より小さいときは、そう正直に書くこと",
     ]
     if plan.alternative:
         rules.append("このプランは利用者が挙げたエリア以外からの代替案なので、冒頭でそのことを断り、代わりに勧める理由を書くこと")
@@ -250,7 +251,7 @@ def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
     prompt += "".join(f"- {rule}\n" for rule in rules)
     prompt += f"\nエリア：{plan.area_name}\n"
     if plan.budget:
-        prompt += f"予算（1つのプランあたり）：{plan.budget:,}円\n"
+        prompt += f"宿代の予算（1泊・全員分）：{plan.budget:,}円\n"
     if plan.day_trip:
         prompt += "宿泊：なし（日帰り）\n"
     prompt += "プラン：\n" + "\n".join(lines) + "\n"

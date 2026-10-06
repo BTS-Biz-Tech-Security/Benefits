@@ -1,7 +1,7 @@
 """検索画面。2つのタブを持つ。
 
 - 「1日プラン提案」（_text_tab）: 休日プランの文章から条件を読み取って検索し、エリアごとの1日プランを提案する
-- 「施設を検索」（_condition_tab）: エリア・カテゴリ・人数・予算で検索し、施設の一覧だけを出す（1日プランは組まない）
+- 「施設を検索」（_condition_tab）: エリア・カテゴリ・人数・宿代の予算で検索し、施設の一覧だけを出す（1日プランは組まない）
 
 読み取りは nl_search.py、施設の検索は search.py、1日プランの組み立ては day_plan.py に任せ、ここは入力と表示だけを持つ。
 """
@@ -32,7 +32,7 @@ def _areas(tenant_id: str) -> dict[str, str]:
 
 
 def format_conditions(conditions: dict[str, Any]) -> str:
-    """「宿泊日：指定なし ・ 人数：4人 ・ 予算：指定なし」の形の文字列にする。"""
+    """「宿泊日：指定なし ・ 人数：4人 ・ 宿代の予算：指定なし」の形の文字列にする。"""
     date_text = people_text = budget_text = "指定なし"
     stay_date = conditions["stay_date"]
     if stay_date:
@@ -41,7 +41,7 @@ def format_conditions(conditions: dict[str, Any]) -> str:
         people_text = f"{conditions['people']}人"
     if conditions["budget"]:
         budget_text = f"{conditions['budget']:,}円（1泊・全員分）"
-    return f"宿泊日：{date_text} ・ 人数：{people_text} ・ 予算：{budget_text}"
+    return f"宿泊日：{date_text} ・ 人数：{people_text} ・ 宿代の予算：{budget_text}"
 
 
 def _category_label(key: str) -> str:
@@ -56,7 +56,7 @@ def _render_menu_list(menus: list[Menu], key_prefix: str, budget: Optional[int] 
     """施設の一覧をカードで並べる。両方のタブで使う。「詳細を見る」ボタンで詳細画面に移る。
 
     key_prefix はボタンの名前の頭に付ける文字。同じ施設が両方のタブに出ても、ボタンの名前が重ならないようにする。
-    budget（1泊・全員分）を渡すと、1日プランと同じく、予算を超える金額に「予算＋〇〇円」のバッジを付ける。
+    budget（宿代の予算。1泊・全員分）を渡すと、1日プランと同じく、予算を超える宿に「予算＋〇〇円」のバッジを付ける。
 
     TODO(results_page.py): この一覧は仮のもの。一覧の表示と並び替えは ui/results_page.py（じゅんぺいさん担当）の役割なので、
     results_page.py ができたら、この関数の中身をその表示（render_results）の呼び出しに置き換える。
@@ -70,7 +70,10 @@ def _render_menu_list(menus: list[Menu], key_prefix: str, budget: Optional[int] 
             plan_name = f"・{plan.name}" if plan else ""
             col_info.markdown(f"**{menu.name}**　:gray[{_category_label(menu.category)}{plan_name}]")
             if plan:
-                over_budget = plan.benefit_price - budget if budget and plan.benefit_price > budget else None
+                # 予算は宿代の上限なので、宿泊施設にだけバッジを付ける
+                over_budget = None
+                if budget and menu.category == "stay" and plan.benefit_price > budget:
+                    over_budget = plan.benefit_price - budget
                 col_info.markdown(price_text(plan.list_price, plan.benefit_price, over_budget))
             else:
                 col_info.caption("価格未登録")
@@ -150,7 +153,7 @@ def _condition_tab(tenant_id: str) -> None:
         col_date, col_people, col_budget = st.columns(3)
         col_date.date_input("宿泊日", value=datetime.date.today() + datetime.timedelta(days=14), format="YYYY/MM/DD")
         people = col_people.number_input("人数", min_value=1, value=2, step=1)
-        budget = col_budget.number_input("予算（1泊・全員分の円。0なら上限なし）", min_value=0, value=0, step=1000)
+        budget = col_budget.number_input("宿代の予算（1泊・全員分の円。0なら上限なし）", min_value=0, value=0, step=1000)
 
         if st.form_submit_button("検索", type="primary", icon=":material/search:"):
             # ① 「すべて」と「0円」は、条件なし（None）にする

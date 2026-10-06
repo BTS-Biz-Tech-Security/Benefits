@@ -237,7 +237,7 @@ def test_explain_by_rule_mentions_over_budget():
     assert plan is not None
     assert day_plan.explain_by_rule(plan) == (
         "箱根で、午前は自由時間、昼は自由時間、午後は自由時間、夜は施設s1に泊まるプランです。合計で19,200円お得です。"
-        "夜の施設s1は予算を8,800円超えますが、定価より19,200円お得です。")
+        "夜の施設s1は宿代の予算を8,800円超えますが、定価より19,200円お得です。")
 
 
 def test_explain_by_rule_alternative_prefix():
@@ -277,3 +277,13 @@ def test_benefit_items_remember_menu_id():
     plan = built([menu("s1", "stay"), menu("l1", "leisure")], [spot("sp1", "meal")])
     assert [(i.name, i.menu_id) for i in plan.items] == [
         ("施設l1", "l1"), ("スポットsp1", None), (FREE_TIME, None), ("施設s1", "s1")]
+
+
+def test_over_budget_only_for_stay():
+    # 予算は宿代の上限なので、食事・レジャーには当てはめない
+    menus = [menu("s1", "stay", price=28800, list_price=48000), menu("m1", "meal", price=25000, list_price=30000),
+             menu("l1", "leisure", price=22000, list_price=26000)]
+    plan = build_day_plan(menus, [], "箱根", budget=20000)
+    assert plan is not None
+    assert [(i.name, i.over_budget) for i in plan.items if i.kind == "benefit"] == [
+        ("施設l1", None), ("施設m1", None), ("施設s1", 8800)]
