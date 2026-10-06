@@ -52,12 +52,12 @@ def render_day_plan(plan: DayPlan) -> None:
         # ② 枠ごとに「時間帯 ｜ 場所 ｜ 金額 ｜ 詳細を見る」の4列で並べる
         for item in plan.items:
             col_slot, col_name, col_price, col_button = st.columns([1, 4, 5, 2], vertical_alignment="center")
-            col_slot.markdown(f"**{item.slot}**")
+            col_slot.markdown(item.slot)  # 時間帯は普通の文字
             name = item.name
             if item.url:
                 name = f"[{item.name}]({item.url})"  # 周辺スポットにリンクがあれば、名前をリンクにする
             if item.kind == "benefit":
-                col_name.markdown(item.name)
+                col_name.markdown(f"**{item.name}**")  # 福利厚生の施設名は太字
                 col_name.caption(item.plan_name or "")
                 col_price.markdown(price_text(item.list_price, item.price, item.over_budget, item.plan_price, item.plan_people))
                 # 福利厚生の施設は、「詳細を見る」ボタンで詳細画面に移れる
