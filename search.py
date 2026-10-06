@@ -1,6 +1,6 @@
 """施設（menus）の検索。エリア・カテゴリ・人数・予算・キーワードで絞り込む。
 
-画面は持たない（画面は ui/search_page.py）。DBから読む部分と、読んだ施設を絞り込む純粋な関数に分けている。
+画面は持たない（画面は ui/search_page.py）。DBから読む部分（fetch_menus）と、読んだ施設を絞り込む部分（filter_menus）に分けている。
 """
 from __future__ import annotations
 
@@ -10,22 +10,38 @@ from db import table
 from models import MENU_COLUMNS, Area, Menu, Plan
 
 
+def rows_of(query: Any) -> list[dict[str, Any]]:
+    """DBに問い合わせて、結果を「行（列名 → 値）の一覧」で返す。
+
+    cast は「この結果は行の一覧です」と Pylance（型チェック）に伝えるためだけのもので、動作は変わらない。
+    """
+    return cast(list[dict[str, Any]], query.execute().data)
+
+
 def list_areas(tenant_id: Optional[str] = None) -> list[Area]:
     """選べるエリア（共通エリアと、そのテナントのエリア）を並び順で返す。"""
     query = table("areas").select("id,code,name,sort").order("sort")
-    query = query.or_(f"tenant_id.is.null,tenant_id.eq.{tenant_id}") if tenant_id else query.is_("tenant_id", "null")
-    return [Area.from_row(cast(dict[str, Any], r)) for r in query.execute().data]
+    if tenant_id:
+        query = query.or_(f"tenant_id.is.null,tenant_id.eq.{tenant_id}")
+    else:
+        query = query.is_("tenant_id", "null")
+    return [Area.from_row(r) for r in rows_of(query)]
 
 
 def count_keyword_hits(menu: Menu, keywords: Iterable[str]) -> int:
     """施設名・所在地・紹介文・タグのどれかに含まれるキーワードの数。"""
-    haystack = " ".join([menu.name, menu.address or "", menu.description or "", *menu.tags])
-    return sum(1 for k in keywords if k and k in haystack)
+    text = " ".join([menu.name, menu.address or "", menu.description or ""] + menu.tags)
+    hits = 0
+    for keyword in keywords:
+        if keyword and keyword in text:
+            hits += 1
+    return hits
 
 
 def min_benefit_price(menu: Menu) -> Optional[int]:
     """福利厚生価格の最安値。プランがなければ None。"""
-    return min((p.benefit_price for p in menu.plans), default=None)
+    prices = [plan.benefit_price for plan in menu.plans]
+    return min(prices) if prices else None
 
 
 def filter_menus(menus: list[Menu], *, people: Optional[int] = None, budget: Optional[int] = None,
@@ -39,51 +55,63 @@ def filter_menus(menus: list[Menu], *, people: Optional[int] = None, budget: Opt
     keywords = [k for k in keywords if k]
     result: list[Menu] = []
     for menu in menus:
+        # ① 人数: 定員が足りない施設を外す
         if people and menu.max_people is not None and menu.max_people < people:
             continue
-        if budget and not any(p.benefit_price <= budget for p in menu.plans):
-            continue
+        # ② 予算: 予算内の料金プランが1つもない施設を外す
+        if budget:
+            prices = [plan.benefit_price for plan in menu.plans]
+            if not prices or min(prices) > budget:
+                continue
+        # ③ キーワード: 1つも含まない施設を外す
         if keywords:
             menu.keyword_hits = count_keyword_hits(menu, keywords)
             if menu.keyword_hits == 0:
                 continue
         result.append(menu)
 
-    def sort_key(m: Menu):
-        price = min_benefit_price(m)
-        return (-m.keyword_hits, price is None, price or 0, m.name)
+    # TODO(ranking.py): ここから下の並べ替えは仮のもの。並び順は ranking.py（じゅんぺいさん担当）が決める役割なので、
+    # ranking.py ができたら外し、絞り込んだ result をそのまま返す。
+    # 並びが変わっても day_plan.py は受け取った順番に従うので、day_plan.py の変更は要らない。
+    def sort_key(menu: Menu) -> tuple[int, bool, int, str]:
+        # キーワードを多く含む順 → 価格のある施設が先 → 安い順 → 名前順
+        price = min_benefit_price(menu)
+        return (-menu.keyword_hits, price is None, price or 0, menu.name)
 
     return sorted(result, key=sort_key)
 
 
 def fetch_menus(tenant_id: str, *, area_code: Optional[str] = None, category: Optional[str] = None) -> list[Menu]:
-    """テナントの施設を、エリアとカテゴリで絞ってDBから読み、プランを付けて返す。"""
+    """テナントの施設を、エリアとカテゴリで絞ってDBから読み、料金プランを付けて返す。"""
+    # ① 施設を読む（エリアとカテゴリはDB側で絞る）
     query = table("menus").select(MENU_COLUMNS).eq("tenant_id", tenant_id).is_("deleted_at", "null")
     if area_code:
-        area_ids = [a.id for a in list_areas(tenant_id) if a.code == area_code]
+        area_ids = [area.id for area in list_areas(tenant_id) if area.code == area_code]
         if not area_ids:
             return []
         query = query.in_("area_id", area_ids)
     if category:
         query = query.eq("category", category)
-    menus = [Menu.from_row(cast(dict[str, Any], r)) for r in query.execute().data]
+    menus = [Menu.from_row(r) for r in rows_of(query)]
     if not menus:
         return []
 
+    # ② その施設の料金プランをまとめて読み、施設ごとに分ける
+    menu_ids = [menu.id for menu in menus]
     plans_by_menu: dict[str, list[Plan]] = {}
-    rows = table("plans").select("*").in_("menu_id", [m.id for m in menus]).is_("deleted_at", "null").execute().data
-    for row in rows:
-        r = cast(dict[str, Any], row)
-        plans_by_menu.setdefault(cast(str, r["menu_id"]), []).append(Plan.from_row(r))
-    for m in menus:
-        m.plans = plans_by_menu.get(m.id, [])
+    for r in rows_of(table("plans").select("*").in_("menu_id", menu_ids).is_("deleted_at", "null")):
+        plans_by_menu.setdefault(r["menu_id"], []).append(Plan.from_row(r))
+
+    # ③ 施設に料金プランを付ける
+    for menu in menus:
+        menu.plans = plans_by_menu.get(menu.id, [])
     return menus
 
 
 def search_menus(tenant_id: str, *, area_code: Optional[str] = None, category: Optional[str] = None,
                  people: Optional[int] = None, budget: Optional[int] = None,
                  keywords: Iterable[str] = ()) -> list[Menu]:
-    """条件に合う施設を、並べ替えて返す。指定しない条件（None・空）は絞り込みに使わない。
+    """条件に合う施設を返す。指定しない条件（None・空）は絞り込みに使わない。
 
     area_code は areas.code（例: "hakone"）、category は models.CATEGORIES のキー（例: "stay"）。
     """
