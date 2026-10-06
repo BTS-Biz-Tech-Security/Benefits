@@ -1,6 +1,7 @@
 """1日プランの表示部品。組み立ては day_plan.py に任せ、ここは表示だけを持つ。
 
 「いくら得か」が一目で分かるよう、見出しの横に合計のお得額、各施設にお得額と割合を緑で出す。
+予算を超える施設には超える額を、利用者が挙げたエリア以外のプランには代替案であることを、バッジで示す。
 """
 from __future__ import annotations
 
@@ -14,14 +15,21 @@ def _price_text(item: PlanItem) -> str:
     if item.price is None:
         return ""
     if not item.saving or item.list_price is None:
-        return f"福利厚生 {item.price:,}円"
-    return f":gray[~~定価 {item.list_price:,}円~~ →] **{item.price:,}円**　:green[**{item.saving:,}円お得**（{item.saving_rate}%）]"
+        text = f"福利厚生 {item.price:,}円"
+    else:
+        text = f":gray[~~定価 {item.list_price:,}円~~ →] **{item.price:,}円**　:green[**{item.saving:,}円お得**（{item.saving_rate}%）]"
+    if item.over_budget:
+        text += f"　:orange-badge[予算＋{item.over_budget:,}円]"
+    return text
 
 
 def render_day_plan(plan: DayPlan) -> None:
     with st.container(border=True):
         col_title, col_total = st.columns([3, 2], vertical_alignment="center")
-        col_title.markdown(f"#### :material/event: 1日プラン（{plan.area_name}）")
+        title = f"#### :material/event: 1日プラン（{plan.area_name}）"
+        if plan.alternative:
+            title += "　:blue-badge[ご希望以外のエリアからの代替案]"
+        col_title.markdown(title)
         if plan.total_saving > 0:
             col_total.metric("合計のお得額", f"{plan.total_saving:,}円お得")
         for item in plan.items:

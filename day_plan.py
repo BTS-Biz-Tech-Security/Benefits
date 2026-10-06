@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional, cast
+from typing import Any, Iterable, Optional, cast
 
 from db import table
 from models import Menu, Plan
@@ -52,6 +52,7 @@ class PlanItem:
     list_price: Optional[int] = None
     price: Optional[int] = None  # 福利厚生価格
     saving: Optional[int] = None  # お得額（定価 − 福利厚生価格）
+    over_budget: Optional[int] = None  # 予算（1つのプランあたり）を超える額。予算内か予算の指定がなければ None
 
     @property
     def saving_rate(self) -> Optional[int]:
@@ -69,6 +70,8 @@ class DayPlan:
     day_trip: bool  # 宿泊がなく日帰りのとき True
     total_price: Optional[int]
     explanation: str = ""
+    budget: Optional[int] = None  # 1つのプランあたりの予算
+    alternative: bool = False  # 利用者が挙げたエリア以外の代替案のとき True
 
     @property
     def total_saving(self) -> int:
@@ -101,11 +104,12 @@ def plan_area_ids(menus: list[Menu], limit: int = MAX_PLANS) -> list[str]:
 
 
 def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
-                   area_id: Optional[str] = None) -> Optional[DayPlan]:
+                   area_id: Optional[str] = None, budget: Optional[int] = None) -> Optional[DayPlan]:
     """検索結果の施設（順位順）と周辺スポットから、午前・昼・午後・夜のプランを組む。
 
     area_id を省略すると、検索結果の最上位のエリアで組む。
-    施設は、お得額が最大のもの（同額なら検索結果で上位のもの）を選ぶ。
+    施設は、お得額が最大のもの（同額なら検索結果で上位のもの）を選ぶ。予算を超えても選び、超える額を記録する
+    （超えてもお得額が大きいことを、表示と説明文で伝える）。
     """
     area_id = area_id or plan_area_id(menus)
     if area_id is None:
@@ -126,6 +130,7 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
                 list_price=plan.list_price if plan else None,
                 price=plan.benefit_price if plan else None,
                 saving=plan.list_price - plan.benefit_price if plan else None,
+                over_budget=plan.benefit_price - budget if plan and budget and plan.benefit_price > budget else None,
             ))
             continue
         if category == "stay":
@@ -143,12 +148,16 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
         area_id=area_id, area_name=area_name, items=items,
         day_trip=not any(i.slot == NIGHT for i in items),
         total_price=sum(prices) if prices else None,
+        budget=budget,
     )
 
 
 def explain_by_rule(plan: DayPlan) -> str:
-    """AI を使わない説明文。「箱根で、午前は…、昼は…、午後は…、夜は…に泊まるプランです。」"""
-    prefix = f"{plan.area_name}で、" if plan.area_name else ""
+    """AI を使わない説明文。「箱根で、午前は…、昼は…、午後は…、夜は…に泊まるプランです。」
+
+    代替案なら先頭に断り書きを、予算を超える施設があれば、超える額とお得額を最後に添える。
+    """
+    prefix = ("ご希望のエリア以外からの代替案です。" if plan.alternative else "") + (f"{plan.area_name}で、" if plan.area_name else "")
     head = prefix + "、".join(f"{i.slot}は{i.name}" for i in plan.items if i.slot != NIGHT)
     if plan.day_trip:
         text = f"{head}を楽しむ日帰りのプランです。"
@@ -157,6 +166,9 @@ def explain_by_rule(plan: DayPlan) -> str:
         text = f"{head}、夜は{night.name}に泊まるプランです。"
     if plan.total_saving > 0:
         text += f"合計で{plan.total_saving:,}円お得です。"
+    for i in plan.items:
+        if i.over_budget:
+            text += f"{i.slot}の{i.name}は予算を{i.over_budget:,}円超えますが、定価より{i.saving or 0:,}円お得です。"
     return text
 
 
@@ -166,6 +178,7 @@ def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
     lines = "\n".join(
         f"- {i.slot}：{i.name}（{KIND_LABELS[i.kind]}）{i.description or ''}"
         + (f" 定価{i.list_price:,}円→福利厚生{i.price:,}円（{i.saving:,}円お得）" if i.saving else "")
+        + (f" ※予算を{i.over_budget:,}円超える" if i.over_budget else "")
         for i in plan.items
     )
     prompt = (
@@ -174,8 +187,12 @@ def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
         "- プランに含まれる場所以外の施設や店の名前を出さないこと\n"
         "- 「自由時間」の枠は、その時間の過ごし方に一般的な言葉で触れる程度にすること\n"
         "- お得額があれば、合計でいくらお得かに触れること\n"
-        "- 説明文だけを出力すること\n\n"
-        f"エリア：{plan.area_name}\n"
+        "- 予算を超える施設があれば、超える額とお得額の両方を示し、お得感の大きさを伝えること。お得額が超える額より小さいときは、そう正直に書くこと\n"
+        + ("- このプランは利用者が挙げたエリア以外からの代替案なので、冒頭でそのことを断り、代わりに勧める理由を書くこと\n"
+           if plan.alternative else "")
+        + "- 説明文だけを出力すること\n\n"
+        + f"エリア：{plan.area_name}\n"
+        + (f"予算（1つのプランあたり）：{plan.budget:,}円\n" if plan.budget else "")
         + ("宿泊：なし（日帰り）\n" if plan.day_trip else "")
         + f"プラン：\n{lines}\n合計のお得額：{plan.total_saving:,}円\n\n利用者の希望：{request_text}"
     )
@@ -211,20 +228,30 @@ def _load_spots(tenant_id: str, area_id: str) -> list[Spot]:
     return [Spot.from_row(cast(dict[str, Any], r)) for r in rows]
 
 
-def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str) -> list[DayPlan]:
-    """画面から呼ぶ入口。エリアごとに周辺スポットを読み、組み立て、説明文を付ける。組めなければ空のリスト。"""
-    area_ids = plan_area_ids(menus)
-    if not area_ids:
+def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget: Optional[int] = None,
+                   requested_area_names: Iterable[str] = ()) -> list[DayPlan]:
+    """画面から呼ぶ入口。エリアごとに周辺スポットを読み、組み立て、説明文を付ける。組めなければ空のリスト。
+
+    requested_area_names（利用者が挙げたエリア名）があれば、そのエリアのプランを先に並べ、
+    それ以外のエリアのプランは代替案（alternative）として後ろに並べる。合わせて最大 MAX_PLANS 個。
+    """
+    all_ids = plan_area_ids(menus, limit=len(menus))
+    if not all_ids:
         return []
     area_names = {a.id: a.name for a in list_areas(tenant_id)}
+    requested = {n for n in requested_area_names if n in area_names.values()}
+    if requested:
+        all_ids = ([i for i in all_ids if area_names.get(i) in requested]
+                   + [i for i in all_ids if area_names.get(i) not in requested])
     plans: list[DayPlan] = []
-    for area_id in area_ids:
+    for area_id in all_ids[:MAX_PLANS]:
         try:
             spots = _load_spots(tenant_id, area_id)
         except Exception:  # 周辺スポットが読めなくても、福利厚生の施設だけで組む
             spots = []
-        plan = build_day_plan(menus, spots, area_names.get(area_id, ""), area_id=area_id)
+        plan = build_day_plan(menus, spots, area_names.get(area_id, ""), area_id=area_id, budget=budget)
         if plan is not None:
+            plan.alternative = bool(requested) and plan.area_name not in requested
             plan.explanation = explain(plan, request_text)
             plans.append(plan)
     return plans

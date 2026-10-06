@@ -76,7 +76,9 @@ def _text_tab(tenant_id: str) -> None:
                     c = parsed["conditions"]
                     menus = search_menus(tenant_id, people=c["people"], budget=c["budget"],
                                          keywords=[k.get("keyword", "") for k in parsed["keywords"]])
-                    plans = make_day_plans(tenant_id, menus, plan_text)
+                    # キーワードにエリア名があれば、そのエリアのプランを先に、ほかは代替案として並べる
+                    plans = make_day_plans(tenant_id, menus, plan_text, budget=c["budget"],
+                                           requested_area_names=[k.get("keyword", "") for k in parsed["keywords"]])
                     # 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
                     st.session_state["search_text_result"] = {"parsed": parsed, "menus": menus, "plans": plans}
 
@@ -118,7 +120,7 @@ def _condition_tab(tenant_id: str) -> None:
                 budget_text = f"{int(budget):,}円" if budget else "上限なし"
                 request_text = f"エリア：{area}・カテゴリ：{CATEGORIES.get(category) or category}・人数：{int(people)}人・予算：{budget_text}"
                 # 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
-                st.session_state["search_condition_result"] = {"menus": menus, "plans": make_day_plans(tenant_id, menus, request_text)}
+                st.session_state["search_condition_result"] = {"menus": menus, "plans": make_day_plans(tenant_id, menus, request_text, budget=int(budget) or None)}
 
     if "search_condition_result" in st.session_state:
         result = st.session_state["search_condition_result"]
