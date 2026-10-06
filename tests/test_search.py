@@ -27,3 +27,17 @@ def test_budget_compares_stay_price_per_person():
     plan = Plan(id="p", menu_id="s1", name="2名1室", list_price=24000, benefit_price=18000, adults=2)
     stay = Menu(id="s1", tenant_id="t", name="施設s1", category="stay", plans=[plan])
     assert [m.id for m in filter_menus([stay], budget=10000)] == ["s1"]
+
+
+def test_budget_for_chosen_category():
+    # 「施設を検索」で食事を選んだときは、食事の料金と予算を比べる
+    menus = [menu("m1", "meal", 6000), menu("m2", "meal", 3000), menu("s1", "stay", 30000)]
+    kept = filter_menus(menus, budget=5000, budget_categories=["meal"])
+    assert sorted(m.id for m in kept) == ["m2", "s1"]
+
+
+def test_budget_for_all_categories():
+    # 「すべて」のときは、どのカテゴリにも予算を当てはめる
+    menus = [menu("m1", "meal", 6000), menu("l1", "leisure", 3000), menu("s1", "stay", 30000)]
+    kept = filter_menus(menus, budget=5000, budget_categories=["stay", "meal", "leisure"])
+    assert [m.id for m in kept] == ["l1"]

@@ -144,7 +144,7 @@ def _pick_spot(spots: list[Spot], kind: str, used: set[str]) -> Optional[Spot]:
     return None
 
 
-def benefit_item(slot: str, menu: Menu, budget: Optional[int]) -> PlanItem:
+def benefit_item(slot: str, menu: Menu, budget: Optional[int], budget_categories: Iterable[str] = ("stay",)) -> PlanItem:
     """福利厚生の施設を、プランの1枠にする。金額はお得額が最大の料金プランのもので、1人あたりにする。
 
     検索画面の施設一覧でも、1日プランと同じ金額を出すために使う。
@@ -160,8 +160,8 @@ def benefit_item(slot: str, menu: Menu, budget: Optional[int]) -> PlanItem:
     item.list_price = per_person(plan.list_price, plan)
     item.price = per_person(plan.benefit_price, plan)
     item.saving = item.list_price - item.price
-    # 宿代の予算（1泊・1人あたり）と、1人あたりの金額を比べる
-    if budget and menu.category == "stay" and item.price > budget:
+    # 予算（1人あたり）と、1人あたりの金額を比べる。既定は宿だけ（1日プランの「宿代の予算」）
+    if budget and menu.category in budget_categories and item.price > budget:
         item.over_budget = item.price - budget
     return item
 

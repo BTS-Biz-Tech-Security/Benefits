@@ -54,12 +54,12 @@ def min_benefit_price(menu: Menu) -> Optional[int]:
 
 
 def filter_menus(menus: list[Menu], *, people: Optional[int] = None, budget: Optional[int] = None,
-                 keywords: Iterable[str] = ()) -> list[Menu]:
+                 keywords: Iterable[str] = (), budget_categories: Iterable[str] = ("stay",)) -> list[Menu]:
     """人数・予算・キーワードで絞り込み、並べ替えて返す。
 
     - 人数: 定員（max_people）が人数以上、または定員が未設定の施設
-    - 予算: 宿代の上限（1泊・1人あたり）。宿泊施設だけに当てはめ、1人あたりの金額が予算以下のプランがない宿は外す。
-      食事・レジャーは予算で外さない
+    - 予算: 1人あたりの上限。budget_categories のカテゴリの施設だけに当てはめ、1人あたりの金額が予算以下のプランがない施設は外す。
+      既定は宿だけ（1日プラン提案の「宿代の予算」）。施設を検索タブでは、選んだカテゴリ（「すべて」なら全カテゴリ）を渡す
     - キーワード: 1つ以上含む施設。含む数の多い順、同数なら安い順
     """
     keywords = [k for k in keywords if k]
@@ -68,8 +68,8 @@ def filter_menus(menus: list[Menu], *, people: Optional[int] = None, budget: Opt
         # ① 人数: 定員が足りない施設を外す
         if people and menu.max_people is not None and menu.max_people < people:
             continue
-        # ② 予算（宿代の上限）: 予算内の料金プランが1つもない宿を外す
-        if budget and menu.category == "stay":
+        # ② 予算（1人あたり）: 予算を当てはめるカテゴリで、予算内の料金プランが1つもない施設を外す
+        if budget and menu.category in budget_categories:
             prices = [per_person(plan.benefit_price, plan) for plan in menu.plans]
             if not prices or min(prices) > budget:
                 continue
@@ -120,13 +120,14 @@ def fetch_menus(tenant_id: str, *, area_code: Optional[str] = None, category: Op
 
 def search_menus(tenant_id: str, *, area_code: Optional[str] = None, category: Optional[str] = None,
                  people: Optional[int] = None, budget: Optional[int] = None,
-                 keywords: Iterable[str] = ()) -> list[Menu]:
+                 keywords: Iterable[str] = (), budget_categories: Iterable[str] = ("stay",)) -> list[Menu]:
     """条件に合う施設を返す。指定しない条件（None・空）は絞り込みに使わない。
 
     area_code は areas.code（例: "hakone"）、category は models.CATEGORIES のキー（例: "stay"）。
+    budget_categories は予算を当てはめるカテゴリ（既定は宿だけ）。
     """
     menus = fetch_menus(tenant_id, area_code=area_code, category=category)
-    return filter_menus(menus, people=people, budget=budget, keywords=keywords)
+    return filter_menus(menus, people=people, budget=budget, keywords=keywords, budget_categories=list(budget_categories))
 
 
 def get_menu(menu_id: str, tenant_id: Optional[str] = None) -> Optional[Menu]:

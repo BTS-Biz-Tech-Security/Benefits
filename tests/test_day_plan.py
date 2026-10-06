@@ -323,3 +323,10 @@ def test_best_saving_plan_compares_per_person():
         Plan(id="b", menu_id="s1", name="1名1室", list_price=20000, benefit_price=15000, adults=1)])
     best = day_plan.best_saving_plan(m)
     assert best is not None and best.name == "1名1室"
+
+
+def test_benefit_item_budget_for_chosen_categories():
+    # 「施設を検索」タブでは、選んだカテゴリにも予算超えを付けられる
+    meal = menu("m1", "meal", price=6000, list_price=8000)
+    assert day_plan.benefit_item("", meal, 5000).over_budget is None  # 既定は宿だけ
+    assert day_plan.benefit_item("", meal, 5000, budget_categories=["meal"]).over_budget == 1000
