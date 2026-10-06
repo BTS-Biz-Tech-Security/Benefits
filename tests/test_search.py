@@ -20,3 +20,10 @@ def test_budget_filters_only_stays():
 def test_no_budget_keeps_all():
     menus = [menu("s1", "stay", 30000), menu("m1", "meal", 25000)]
     assert sorted(m.id for m in filter_menus(menus)) == ["m1", "s1"]
+
+
+def test_budget_compares_stay_price_per_person():
+    # 2名1室 18,000円は1人 9,000円なので、宿代の予算 1人1万円に収まる
+    plan = Plan(id="p", menu_id="s1", name="2名1室", list_price=24000, benefit_price=18000, adults=2)
+    stay = Menu(id="s1", tenant_id="t", name="施設s1", category="stay", plans=[plan])
+    assert [m.id for m in filter_menus([stay], budget=10000)] == ["s1"]

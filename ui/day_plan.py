@@ -13,10 +13,12 @@ from day_plan import KIND_LABELS, DayPlan
 from ui.detail_page import open_detail
 
 
-def price_text(list_price: Optional[int], price: Optional[int], over_budget: Optional[int] = None) -> str:
-    """「定価 30,000円 → 21,000円　9,000円お得（30%）」の形。お得額がなければ福利厚生価格だけ。
+def price_text(list_price: Optional[int], price: Optional[int], over_budget: Optional[int] = None,
+               plan_price: Optional[int] = None, plan_people: Optional[int] = None) -> str:
+    """「定価 15,000円 → 10,500円　4,500円お得（30%）（2名で21,000円）」の形。お得額がなければ福利厚生価格だけ。
 
-    1日プランと、検索画面の施設一覧の両方で使う（同じ見た目にそろえるため）。
+    金額は1人あたり。料金プランが2名分などのときは、料金プランに書かれた金額を（2名で〇〇円）と添える。
+    1日プランと、検索画面の施設一覧・詳細画面で使う（同じ見た目にそろえるため）。
     """
     if price is None:
         return ""
@@ -28,6 +30,8 @@ def price_text(list_price: Optional[int], price: Optional[int], over_budget: Opt
         old_price = f":gray[~~定価 {list_price:,}円~~ →]"  # ~~ ~~ は取り消し線
         new_price = f"**{price:,}円**"
         text = f"{old_price} {new_price}　:green[**{saving:,}円お得**（{rate}%）]"
+    if plan_people and plan_people > 1 and plan_price is not None:
+        text = ":gray[1人あたり] " + text + f"　:gray[（{plan_people}名で{plan_price:,}円）]"
     if over_budget:
         text += f"　:orange-badge[予算＋{over_budget:,}円]"
     return text
@@ -55,7 +59,7 @@ def render_day_plan(plan: DayPlan) -> None:
             if item.kind == "benefit":
                 col_name.markdown(item.name)
                 col_name.caption(item.plan_name or "")
-                col_price.markdown(price_text(item.list_price, item.price, item.over_budget))
+                col_price.markdown(price_text(item.list_price, item.price, item.over_budget, item.plan_price, item.plan_people))
                 # 福利厚生の施設は、「詳細を見る」ボタンで詳細画面に移れる
                 if item.menu_id:
                     col_button.button("詳細を見る", key=f"day-plan-{plan.area_id}-{item.slot}-{item.menu_id}",

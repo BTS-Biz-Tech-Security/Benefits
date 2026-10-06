@@ -8,7 +8,7 @@ from __future__ import annotations
 import streamlit as st
 
 from models import CATEGORIES, Menu
-from search import get_menu
+from search import get_menu, per_person
 from session import require_login
 
 # カテゴリごとのバッジの色とアイコン
@@ -79,15 +79,13 @@ def _render_plans_and_conditions(menu: Menu) -> None:
     for plan in menu.plans:
         with st.container(border=True):
             st.markdown(f"**{plan.name}**")
-            details = [f"部屋 {plan.room_type or '—'}", f"食事 {plan.meal or '—'}", f"{plan.nights}泊・1人あたりの料金"]
+            details = [f"部屋 {plan.room_type or '—'}", f"食事 {plan.meal or '—'}", f"{plan.adults or 1}名・{plan.nights}泊の料金"]
             st.caption(" ／ ".join(details))
-            saving = plan.list_price - plan.benefit_price
-            if saving > 0:
-                rate = round(saving * 100 / plan.list_price)
-                st.markdown(f":gray[~~定価 {plan.list_price:,}円~~ →] **{plan.benefit_price:,}円**　"
-                            f":green[**{saving:,}円お得**（{rate}%）]")
-            else:
-                st.markdown(f"福利厚生 **{plan.benefit_price:,}円**")
+            # 1日プランや一覧と同じ見せ方（1人あたりの金額と、料金プランに書かれた金額）
+            # ui.day_plan は ui.detail_page を読み込んでいるので、ここで読み込む（ファイルの先頭で読むと循環してしまう）
+            from ui.day_plan import price_text
+            st.markdown(price_text(per_person(plan.list_price, plan), per_person(plan.benefit_price, plan),
+                                   plan_price=plan.benefit_price, plan_people=plan.adults or 1))
 
     # ② 利用条件
     st.markdown("**利用条件**")

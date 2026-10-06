@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 import streamlit as st
 
-from day_plan import DayPlan, best_saving_plan, make_day_plans
+from day_plan import DayPlan, benefit_item, make_day_plans
 from models import CATEGORIES, Menu
 from nl_search import SEARCH_FOCUS_OPTIONS, ai_available, parse_plan
 from search import list_areas, search_menus
@@ -63,18 +63,15 @@ def _render_menu_list(menus: list[Menu], key_prefix: str, budget: Optional[int] 
     """
     for menu in menus:
         # 1日プランと同じく、お得額が最大の料金プランの金額を出す
-        plan = best_saving_plan(menu)
+        # 1日プランと同じ計算（お得額が最大の料金プラン、1人あたりの金額、宿だけ予算と比べる）
+        item = benefit_item("", menu, budget)
         with st.container(border=True):
             # 左に施設の情報、右に「詳細を見る」ボタン
             col_info, col_button = st.columns([5, 1], vertical_alignment="center")
-            plan_name = f"・{plan.name}" if plan else ""
+            plan_name = f"・{item.plan_name}" if item.plan_name else ""
             col_info.markdown(f"**{menu.name}**　:gray[{_category_label(menu.category)}{plan_name}]")
-            if plan:
-                # 予算は宿代の上限なので、宿泊施設にだけバッジを付ける
-                over_budget = None
-                if budget and menu.category == "stay" and plan.benefit_price > budget:
-                    over_budget = plan.benefit_price - budget
-                col_info.markdown(price_text(plan.list_price, plan.benefit_price, over_budget))
+            if item.price is not None:
+                col_info.markdown(price_text(item.list_price, item.price, item.over_budget, item.plan_price, item.plan_people))
             else:
                 col_info.caption("価格未登録")
             if menu.description:

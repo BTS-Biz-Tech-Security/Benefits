@@ -38,6 +38,15 @@ def count_keyword_hits(menu: Menu, keywords: Iterable[str]) -> int:
     return hits
 
 
+def per_person(amount: int, plan: Plan) -> int:
+    """料金プランの金額を1人あたりにする。料金は plan.adults 人分（宿は2名1室など）なので、その人数で割る。
+
+    人数が入っていない料金プランは、1人分とみなす。部屋数は考えない（1人あたりの金額で比べるだけ）。
+    """
+    people = plan.adults or 1
+    return round(amount / people)
+
+
 def min_benefit_price(menu: Menu) -> Optional[int]:
     """福利厚生価格の最安値。プランがなければ None。"""
     prices = [plan.benefit_price for plan in menu.plans]
@@ -49,7 +58,8 @@ def filter_menus(menus: list[Menu], *, people: Optional[int] = None, budget: Opt
     """人数・予算・キーワードで絞り込み、並べ替えて返す。
 
     - 人数: 定員（max_people）が人数以上、または定員が未設定の施設
-    - 予算: 宿代の上限（1泊・1人あたり）。宿泊施設だけに当てはめ、予算以下のプランがない宿は外す。食事・レジャーは予算で外さない
+    - 予算: 宿代の上限（1泊・1人あたり）。宿泊施設だけに当てはめ、1人あたりの金額が予算以下のプランがない宿は外す。
+      食事・レジャーは予算で外さない
     - キーワード: 1つ以上含む施設。含む数の多い順、同数なら安い順
     """
     keywords = [k for k in keywords if k]
@@ -60,7 +70,7 @@ def filter_menus(menus: list[Menu], *, people: Optional[int] = None, budget: Opt
             continue
         # ② 予算（宿代の上限）: 予算内の料金プランが1つもない宿を外す
         if budget and menu.category == "stay":
-            prices = [plan.benefit_price for plan in menu.plans]
+            prices = [per_person(plan.benefit_price, plan) for plan in menu.plans]
             if not prices or min(prices) > budget:
                 continue
         # ③ キーワード: 1つも含まない施設を外す
