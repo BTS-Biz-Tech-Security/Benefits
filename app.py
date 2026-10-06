@@ -16,7 +16,9 @@ from session import current_user, set_user
 ASSETS = Path(__file__).resolve().parent / "assets"
 
 # メニューに出す画面 {キー: 表示名}
-PAGES: dict[str, str] = {}
+PAGES: dict[str, str] = {
+    "search": ":material/search: 検索",
+}
 
 # ① ページ設定とロゴ（st.set_page_config・st.logo）
 st.set_page_config(page_title="福利厚生検索アプリ", page_icon=str(ASSETS / "icon.png"), layout="wide")
@@ -51,3 +53,6 @@ page = st.session_state.get("page")
 if page is None:
     st.subheader("福利厚生検索アプリ")
     st.write(f"{user.name}さん、ようこそ。")
+elif page == "search":
+    from ui.search_page import render
+    render()
