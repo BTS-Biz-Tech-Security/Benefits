@@ -8,7 +8,7 @@ from __future__ import annotations
 import datetime
 import json
 import re
-from typing import Any, Optional, cast
+from typing import Any, Optional
 
 import streamlit as st
 
@@ -39,16 +39,18 @@ def llm_api_key() -> Optional[str]:
 
 
 def ai_available() -> bool:
+    """AI を使える設定になっているか。"""
     return bool(llm_api_key())
 
 
 def normalize_conditions(raw: Any, today: Optional[datetime.date] = None) -> dict[str, Any]:
     """読み取った宿泊日・人数・予算を整える。読めない値は「指定なし」（None）にする。"""
-    conditions: dict[str, Any] = cast(dict[str, Any], raw) if isinstance(raw, dict) else {}
-    today = today or datetime.date.today()
+    conditions: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    if today is None:
+        today = datetime.date.today()
 
-    # 月日（MM-DD）だけを使い、年はプログラムで決める（今日以降で最も近い日付）
-    # 年付き（YYYY-MM-DD）で返った場合も、年は古いことがあるため無視して月日だけを使う
+    # ① 宿泊日: 月日（MM-DD）だけを使い、年はプログラムで決める（今日以降で最も近い日付）
+    #    年付き（YYYY-MM-DD）で返った場合も、年は古いことがあるため無視して月日だけを使う
     stay_date = None
     match = re.fullmatch(r"(?:\d{4}-)?(\d{1,2})-(\d{1,2})", str(conditions.get("stay_date")))
     if match:
@@ -59,19 +61,30 @@ def normalize_conditions(raw: Any, today: Optional[datetime.date] = None) -> dic
         except ValueError:
             stay_date = None
 
-    def to_positive_int(value: Any) -> Optional[int]:
-        try:
-            number = int(value)
-        except (TypeError, ValueError):
-            return None
-        return number if number > 0 else None
+    # ② 人数・予算: 1以上の整数にできるものだけ使う
+    people = _to_positive_int(conditions.get("people"))
+    budget = _to_positive_int(conditions.get("budget"))
+    return {"stay_date": stay_date, "people": people, "budget": budget}
 
-    return {"stay_date": stay_date, "people": to_positive_int(conditions.get("people")), "budget": to_positive_int(conditions.get("budget"))}
+
+def _to_positive_int(value: Any) -> Optional[int]:
+    """1以上の整数にできれば、その数。できなければ None。"""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    if number <= 0:
+        return None
+    return number
 
 
 def _drop_numeric_keywords(keywords: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """「予算10万円」「4人」のような数字入りの語は施設検索でヒットしにくいため除く（半角・全角の数字）。"""
-    return [item for item in keywords if not re.search(r"[0-9０-９]", item.get("keyword", ""))]
+    result = []
+    for item in keywords:
+        if not re.search(r"[0-9０-９]", item.get("keyword", "")):
+            result.append(item)
+    return result
 
 
 def _build_prompt(plan_text: str, focus: str) -> str:
@@ -113,21 +126,28 @@ def _parse_with_ai(plan_text: str, focus: str, api_key: str) -> dict[str, Any]:
 
 def parse_with_rules(plan_text: str) -> dict[str, Any]:
     """AIを使わずに読み取る。決まった語の完全一致と、「4人」「10万円」「12月26日」の形だけを拾う。"""
-    keywords = [
-        {"keyword": word, "category": category, "reason": "文章に含まれていた語"}
-        for category, words in RULE_KEYWORDS.items() for word in words if word in plan_text
-    ]
+    # ① キーワード: 決まった語が文章に含まれていれば拾う
+    keywords = []
+    for category, words in RULE_KEYWORDS.items():
+        for word in words:
+            if word in plan_text:
+                keywords.append({"keyword": word, "category": category, "reason": "文章に含まれていた語"})
 
+    # ② 宿泊日・人数・予算: 全角の数字を半角にしてから、決まった形を探す
     text = plan_text.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
     raw: dict[str, Any] = {}
-    if m := re.search(r"(\d{1,2})月(\d{1,2})日", text):
-        raw["stay_date"] = f"{m.group(1)}-{m.group(2)}"
-    if m := re.search(r"(\d+)\s*人", text):
-        raw["people"] = m.group(1)
-    if m := re.search(r"(\d+(?:\.\d+)?)\s*万円", text):
-        raw["budget"] = int(float(m.group(1)) * 10000)
-    elif m := re.search(r"([\d,]+)\s*円", text):
-        raw["budget"] = m.group(1).replace(",", "")
+    date_match = re.search(r"(\d{1,2})月(\d{1,2})日", text)
+    if date_match:
+        raw["stay_date"] = f"{date_match.group(1)}-{date_match.group(2)}"
+    people_match = re.search(r"(\d+)\s*人", text)
+    if people_match:
+        raw["people"] = people_match.group(1)
+    man_yen_match = re.search(r"(\d+(?:\.\d+)?)\s*万円", text)  # 「10万円」「1.5万円」
+    yen_match = re.search(r"([\d,]+)\s*円", text)  # 「30,000円」
+    if man_yen_match:
+        raw["budget"] = int(float(man_yen_match.group(1)) * 10000)
+    elif yen_match:
+        raw["budget"] = yen_match.group(1).replace(",", "")
 
     return {"summary": "", "conditions": raw, "keywords": keywords}
 
@@ -138,8 +158,14 @@ def parse_plan(plan_text: str, focus: str = SEARCH_FOCUS_OPTIONS[0], today: Opti
     conditions は {stay_date: date|None, people: int|None, budget: int|None}。
     keywords は [{keyword, category, reason}]。AIの返答が JSON として読めないときは json.JSONDecodeError を送出する。
     """
+    # ① AI があれば AI、なければ簡易なルールで読み取る
     api_key = llm_api_key()
-    result = _parse_with_ai(plan_text, focus, api_key) if api_key else parse_with_rules(plan_text)
+    if api_key:
+        result = _parse_with_ai(plan_text, focus, api_key)
+    else:
+        result = parse_with_rules(plan_text)
+
+    # ② 読み取った結果を整える
     result["keywords"] = _drop_numeric_keywords(result.get("keywords", []))
     result["conditions"] = normalize_conditions(result.get("conditions"), today)
     result["used_ai"] = bool(api_key)

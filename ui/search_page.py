@@ -29,11 +29,20 @@ def _areas(tenant_id: str) -> dict[str, str]:
 
 def format_conditions(conditions: dict[str, Any]) -> str:
     """「宿泊日：指定なし ・ 人数：4人 ・ 予算：指定なし」の形の文字列にする。"""
-    stay_date, people, budget = conditions["stay_date"], conditions["people"], conditions["budget"]
-    date_text = f"{stay_date:%Y/%m/%d}（{WEEKDAY_NAMES[stay_date.weekday()]}）" if stay_date else "指定なし"
-    people_text = f"{people}人" if people else "指定なし"
-    budget_text = f"{budget:,}円" if budget else "指定なし"
+    date_text = people_text = budget_text = "指定なし"
+    stay_date = conditions["stay_date"]
+    if stay_date:
+        date_text = f"{stay_date:%Y/%m/%d}（{WEEKDAY_NAMES[stay_date.weekday()]}）"
+    if conditions["people"]:
+        people_text = f"{conditions['people']}人"
+    if conditions["budget"]:
+        budget_text = f"{conditions['budget']:,}円"
     return f"宿泊日：{date_text} ・ 人数：{people_text} ・ 予算：{budget_text}"
+
+
+def _category_label(key: str) -> str:
+    """カテゴリの選択肢の表示名（"stay" → "宿泊"）。「すべて」はそのまま。"""
+    return CATEGORIES.get(key, key)
 
 
 def _render_results(menus: list[Menu], plans: list[DayPlan]) -> None:
@@ -70,18 +79,21 @@ def _text_tab(tenant_id: str) -> None:
             st.warning("休日プランを入力してください。")
         else:
             with st.spinner("福利厚生メニューから探して、1日プランを組み立てています..."):
+                # ① 文章から、キーワードと宿泊日・人数・予算を読み取る
                 try:
                     parsed = parse_plan(plan_text, focus)
                 except json.JSONDecodeError:
                     st.error("AIの返答をうまく読み取れませんでした。もう一度「探す」を押してください。")
-                else:
-                    c = parsed["conditions"]
-                    menus = search_menus(tenant_id, people=c["people"], budget=c["budget"],
-                                         keywords=[k.get("keyword", "") for k in parsed["keywords"]])
-                    # キーワードにエリア名があれば、そのエリアのプランを先に、ほかは代替案として並べる
-                    plans = make_day_plans(tenant_id, menus, plan_text, budget=c["budget"],
-                                           requested_area_names=[k.get("keyword", "") for k in parsed["keywords"]])
-                    # 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
+                    parsed = None  # 読めなかったときは、前回の結果をそのまま表示する
+                if parsed is not None:
+                    conditions = parsed["conditions"]
+                    words = [item.get("keyword", "") for item in parsed["keywords"]]
+
+                    # ② 検索し、1日プランを組む。キーワードにエリア名があれば、そのエリアのプランを先に、ほかは代替案として並べる
+                    menus = search_menus(tenant_id, people=conditions["people"], budget=conditions["budget"], keywords=words)
+                    plans = make_day_plans(tenant_id, menus, plan_text, budget=conditions["budget"], requested_area_names=words)
+
+                    # ③ 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
                     st.session_state["search_text_result"] = {"parsed": parsed, "menus": menus, "plans": plans}
 
     if "search_text_result" in st.session_state:
@@ -103,7 +115,7 @@ def _condition_tab(tenant_id: str) -> None:
     with st.form("search_condition_form"):
         col_area, col_category = st.columns(2)
         area = col_area.selectbox("エリア", options=[ALL, *areas])
-        category = col_category.selectbox("カテゴリ", options=[ALL, *CATEGORIES], format_func=lambda k: CATEGORIES.get(k) or k)
+        category = col_category.selectbox("カテゴリ", options=[ALL, *CATEGORIES], format_func=_category_label)
 
         col_date, col_people, col_budget = st.columns(3)
         col_date.date_input("宿泊日", value=datetime.date.today() + datetime.timedelta(days=14), format="YYYY/MM/DD")
@@ -111,18 +123,19 @@ def _condition_tab(tenant_id: str) -> None:
         budget = col_budget.number_input("予算（円・0なら上限なし）", min_value=0, value=0, step=1000)
 
         if st.form_submit_button("検索", type="primary", icon=":material/search:"):
+            # ① 「すべて」と「0円」は、条件なし（None）にする
+            area_code = areas.get(area)
+            category_key = None if category == ALL else category
+            budget_value = int(budget) if budget > 0 else None
             with st.spinner("福利厚生メニューから探して、1日プランを組み立てています..."):
-                menus = search_menus(
-                    tenant_id,
-                    area_code=areas.get(area),
-                    category=None if category == ALL else category,
-                    people=int(people),
-                    budget=int(budget) or None,
-                )
-                budget_text = f"{int(budget):,}円" if budget else "上限なし"
-                request_text = f"エリア：{area}・カテゴリ：{CATEGORIES.get(category) or category}・人数：{int(people)}人・予算：{budget_text}"
-                # 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
-                st.session_state["search_condition_result"] = {"menus": menus, "plans": make_day_plans(tenant_id, menus, request_text, budget=int(budget) or None)}
+                # ② 検索し、1日プランを組む
+                menus = search_menus(tenant_id, area_code=area_code, category=category_key,
+                                     people=int(people), budget=budget_value)
+                budget_text = f"{budget_value:,}円" if budget_value else "上限なし"
+                request_text = f"エリア：{area}・カテゴリ：{_category_label(category)}・人数：{int(people)}人・予算：{budget_text}"
+                plans = make_day_plans(tenant_id, menus, request_text, budget=budget_value)
+                # ③ 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
+                st.session_state["search_condition_result"] = {"menus": menus, "plans": plans}
 
     if "search_condition_result" in st.session_state:
         result = st.session_state["search_condition_result"]
