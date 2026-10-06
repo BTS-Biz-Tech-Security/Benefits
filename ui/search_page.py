@@ -1,4 +1,7 @@
-"""検索画面。「文章で探す」と「条件で探す」の2つのタブ。
+"""検索画面。2つのタブを持つ。
+
+- 「1日プラン提案」（_text_tab）: 休日プランの文章から条件を読み取って検索し、エリアごとの1日プランを提案する
+- 「施設を検索」（_condition_tab）: エリア・カテゴリ・人数・予算で検索し、施設の一覧だけを出す（1日プランは組まない）
 
 読み取りは nl_search.py、施設の検索は search.py、1日プランの組み立ては day_plan.py に任せ、ここは入力と表示だけを持つ。
 """
@@ -45,26 +48,38 @@ def _category_label(key: str) -> str:
     return CATEGORIES.get(key, key)
 
 
-def _render_results(menus: list[Menu], plans: list[DayPlan]) -> None:
+NOT_FOUND = "条件に合う施設が見つかりませんでした。条件を減らして探してください。"
+
+
+def _render_menu_list(menus: list[Menu]) -> None:
+    """施設の一覧をカードで並べる。両方のタブで使う。
+
+    TODO(results_page.py): この一覧は仮のもの。一覧の表示と並び替えは ui/results_page.py（じゅんぺいさん担当）の役割なので、
+    results_page.py ができたら、この関数の中身をその表示（render_results）の呼び出しに置き換える。
+    """
+    for menu in menus:
+        price = min_benefit_price(menu)
+        price_text = f"福利厚生価格 {price:,}円〜" if price is not None else "価格未登録"
+        with st.container(border=True):
+            st.markdown(f"**{menu.name}**　:gray[{_category_label(menu.category)}・{price_text}]")
+            if menu.description:
+                st.caption(menu.description)
+
+
+def _render_plans_and_list(menus: list[Menu], plans: list[DayPlan]) -> None:
+    """「1日プラン提案」タブの結果。1日プランを並べ、その下に施設一覧を折りたたんで置く。"""
     if not menus:
-        st.info("条件に合う施設が見つかりませんでした。条件を減らして探してください。")
+        st.info(NOT_FOUND)
         return
     # エリアごとのプランを、検索結果で上位のエリアから縦に並べる
     for plan in plans:
         render_day_plan(plan)
-    # TODO(results_page.py): ここから下の施設一覧は仮のもの。一覧の表示と並び替えは ui/results_page.py（じゅんぺいさん担当）の役割なので、
-    # results_page.py ができたら、この折りたたみをその表示（render_results）の呼び出しに置き換える。
     with st.expander(f"検索結果の施設一覧（{len(menus)}件）"):
-        for m in menus:
-            price = min_benefit_price(m)
-            price_text = f"福利厚生価格 {price:,}円〜" if price is not None else "価格未登録"
-            with st.container(border=True):
-                st.markdown(f"**{m.name}**　:gray[{CATEGORIES.get(m.category, m.category)}・{price_text}]")
-                if m.description:
-                    st.caption(m.description)
+        _render_menu_list(menus)
 
 
 def _text_tab(tenant_id: str) -> None:
+    """「1日プラン提案」タブ。文章から条件を読み取って検索し、1日プランと施設一覧を出す。"""
     if not ai_available():
         st.caption("AIの設定がないため、決まった語と「4人」「10万円」「12月26日」の形だけを読み取ります。")
     plan_text = st.text_area(
@@ -104,13 +119,14 @@ def _text_tab(tenant_id: str) -> None:
         if parsed.get("summary"):
             st.write(parsed["summary"])
         st.markdown(format_conditions(parsed["conditions"]))
-        _render_results(result["menus"], result["plans"])
+        _render_plans_and_list(result["menus"], result["plans"])
         with st.expander(f"使用した検索キーワード（{len(parsed.get('keywords', []))}個）"):
             for item in parsed.get("keywords", []):
                 st.markdown(f"**{item.get('keyword', '')}**（{item.get('category', '')}）　:gray[{item.get('reason', '')}]")
 
 
 def _condition_tab(tenant_id: str) -> None:
+    """「施設を検索」タブ。条件で検索し、施設の一覧だけを出す。"""
     areas = _areas(tenant_id)
     with st.form("search_condition_form"):
         col_area, col_category = st.columns(2)
@@ -127,19 +143,21 @@ def _condition_tab(tenant_id: str) -> None:
             area_code = areas.get(area)
             category_key = None if category == ALL else category
             budget_value = int(budget) if budget > 0 else None
-            with st.spinner("福利厚生メニューから探して、1日プランを組み立てています..."):
-                # ② 検索し、1日プランを組む
+            with st.spinner("福利厚生メニューから探しています..."):
+                # ② 検索する（このタブでは1日プランは組まない）
                 menus = search_menus(tenant_id, area_code=area_code, category=category_key,
                                      people=int(people), budget=budget_value)
-                budget_text = f"{budget_value:,}円" if budget_value else "上限なし"
-                request_text = f"エリア：{area}・カテゴリ：{_category_label(category)}・人数：{int(people)}人・予算：{budget_text}"
-                plans = make_day_plans(tenant_id, menus, request_text, budget=budget_value)
-                # ③ 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
-                st.session_state["search_condition_result"] = {"menus": menus, "plans": plans}
+                # ③ 画面が再実行されても結果が消えないよう保存しておく
+                st.session_state["search_condition_result"] = {"menus": menus}
 
+    # ④ 検索結果の施設一覧だけを、折りたたまずに表示する
     if "search_condition_result" in st.session_state:
-        result = st.session_state["search_condition_result"]
-        _render_results(result["menus"], result["plans"])
+        menus = st.session_state["search_condition_result"]["menus"]
+        if not menus:
+            st.info(NOT_FOUND)
+        else:
+            st.markdown(f"**見つかった施設：{len(menus)}件**")
+            _render_menu_list(menus)
 
 
 def render() -> None:
