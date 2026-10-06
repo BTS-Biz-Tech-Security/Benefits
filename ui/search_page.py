@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import datetime
 import json
-from typing import Any, Optional
+from typing import Any
 
 import streamlit as st
 
-from day_plan import DayPlan, make_day_plan
+from day_plan import DayPlan, make_day_plans
 from models import CATEGORIES, Menu
 from nl_search import SEARCH_FOCUS_OPTIONS, ai_available, parse_plan
 from search import list_areas, min_benefit_price, search_menus
@@ -36,11 +36,12 @@ def format_conditions(conditions: dict[str, Any]) -> str:
     return f"宿泊日：{date_text} ・ 人数：{people_text} ・ 予算：{budget_text}"
 
 
-def _render_results(menus: list[Menu], plan: Optional[DayPlan]) -> None:
+def _render_results(menus: list[Menu], plans: list[DayPlan]) -> None:
     if not menus:
         st.info("条件に合う施設が見つかりませんでした。条件を減らして探してください。")
         return
-    if plan is not None:
+    # エリアごとのプランを、検索結果で上位のエリアから縦に並べる
+    for plan in plans:
         render_day_plan(plan)
     with st.expander(f"検索結果の施設一覧（{len(menus)}件）"):
         for m in menus:
@@ -75,9 +76,9 @@ def _text_tab(tenant_id: str) -> None:
                     c = parsed["conditions"]
                     menus = search_menus(tenant_id, people=c["people"], budget=c["budget"],
                                          keywords=[k.get("keyword", "") for k in parsed["keywords"]])
-                    plan = make_day_plan(tenant_id, menus, plan_text)
+                    plans = make_day_plans(tenant_id, menus, plan_text)
                     # 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
-                    st.session_state["search_text_result"] = {"parsed": parsed, "menus": menus, "plan": plan}
+                    st.session_state["search_text_result"] = {"parsed": parsed, "menus": menus, "plans": plans}
 
     if "search_text_result" in st.session_state:
         result = st.session_state["search_text_result"]
@@ -87,7 +88,7 @@ def _text_tab(tenant_id: str) -> None:
         if parsed.get("summary"):
             st.write(parsed["summary"])
         st.markdown(format_conditions(parsed["conditions"]))
-        _render_results(result["menus"], result["plan"])
+        _render_results(result["menus"], result["plans"])
         with st.expander(f"使用した検索キーワード（{len(parsed.get('keywords', []))}個）"):
             for item in parsed.get("keywords", []):
                 st.markdown(f"**{item.get('keyword', '')}**（{item.get('category', '')}）　:gray[{item.get('reason', '')}]")
@@ -117,11 +118,11 @@ def _condition_tab(tenant_id: str) -> None:
                 budget_text = f"{int(budget):,}円" if budget else "上限なし"
                 request_text = f"エリア：{area}・カテゴリ：{CATEGORIES.get(category) or category}・人数：{int(people)}人・予算：{budget_text}"
                 # 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
-                st.session_state["search_condition_result"] = {"menus": menus, "plan": make_day_plan(tenant_id, menus, request_text)}
+                st.session_state["search_condition_result"] = {"menus": menus, "plans": make_day_plans(tenant_id, menus, request_text)}
 
     if "search_condition_result" in st.session_state:
         result = st.session_state["search_condition_result"]
-        _render_results(result["menus"], result["plan"])
+        _render_results(result["menus"], result["plans"])
 
 
 def render() -> None:

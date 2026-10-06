@@ -1,5 +1,7 @@
 """検索結果の施設と周辺スポットから、1日プラン（午前・昼・午後・夜）を組み立てる。
 
+プランはエリアごとに1つ。検索結果に出てくるエリアを上位から順に、最大 MAX_PLANS 個まで組む。
+
 各枠には、同じエリア・同じカテゴリの施設のうち、お得額（定価 − 福利厚生価格）が最大のものを入れる。
 
 組み立て（build_day_plan）は DB も AI も使わない純粋な関数。説明文は AI のキーがあれば AI、なければ決まった文の型。
@@ -19,6 +21,7 @@ from search import list_areas
 SLOTS = [("午前", "leisure"), ("昼", "meal"), ("午後", "leisure"), ("夜", "stay")]
 NIGHT = "夜"
 FREE_TIME = "自由時間"
+MAX_PLANS = 3
 KIND_LABELS = {"benefit": "福利厚生", "spot": "周辺スポット", "free": "自由時間"}
 
 
@@ -88,12 +91,23 @@ def plan_area_id(menus: list[Menu]) -> Optional[str]:
     return next((m.area_id for m in menus if m.area_id), None)
 
 
-def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str) -> Optional[DayPlan]:
+def plan_area_ids(menus: list[Menu], limit: int = MAX_PLANS) -> list[str]:
+    """プランを組むエリア。検索結果に出てくる順（重複なし）に、最大 limit 個。"""
+    ids: list[str] = []
+    for m in menus:
+        if m.area_id and m.area_id not in ids:
+            ids.append(m.area_id)
+    return ids[:limit]
+
+
+def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
+                   area_id: Optional[str] = None) -> Optional[DayPlan]:
     """検索結果の施設（順位順）と周辺スポットから、午前・昼・午後・夜のプランを組む。
 
+    area_id を省略すると、検索結果の最上位のエリアで組む。
     施設は、お得額が最大のもの（同額なら検索結果で上位のもの）を選ぶ。
     """
-    area_id = plan_area_id(menus)
+    area_id = area_id or plan_area_id(menus)
     if area_id is None:
         return None
     candidates = [m for m in menus if m.area_id == area_id]
@@ -197,17 +211,20 @@ def _load_spots(tenant_id: str, area_id: str) -> list[Spot]:
     return [Spot.from_row(cast(dict[str, Any], r)) for r in rows]
 
 
-def make_day_plan(tenant_id: str, menus: list[Menu], request_text: str) -> Optional[DayPlan]:
-    """画面から呼ぶ入口。エリアを決め、周辺スポットを読み、組み立て、説明文を付ける。組めなければ None。"""
-    area_id = plan_area_id(menus)
-    if area_id is None:
-        return None
-    try:
-        spots = _load_spots(tenant_id, area_id)
-    except Exception:  # 周辺スポットが読めなくても、福利厚生の施設だけで組む
-        spots = []
-    area_name = next((a.name for a in list_areas(tenant_id) if a.id == area_id), "")
-    plan = build_day_plan(menus, spots, area_name)
-    if plan is not None:
-        plan.explanation = explain(plan, request_text)
-    return plan
+def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str) -> list[DayPlan]:
+    """画面から呼ぶ入口。エリアごとに周辺スポットを読み、組み立て、説明文を付ける。組めなければ空のリスト。"""
+    area_ids = plan_area_ids(menus)
+    if not area_ids:
+        return []
+    area_names = {a.id: a.name for a in list_areas(tenant_id)}
+    plans: list[DayPlan] = []
+    for area_id in area_ids:
+        try:
+            spots = _load_spots(tenant_id, area_id)
+        except Exception:  # 周辺スポットが読めなくても、福利厚生の施設だけで組む
+            spots = []
+        plan = build_day_plan(menus, spots, area_names.get(area_id, ""), area_id=area_id)
+        if plan is not None:
+            plan.explanation = explain(plan, request_text)
+            plans.append(plan)
+    return plans

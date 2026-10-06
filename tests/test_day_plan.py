@@ -130,35 +130,65 @@ def test_explain_uses_ai_text(monkeypatch):
     assert day_plan.explain(plan, "温泉に行きたい") == "AIの説明です。"
 
 
-def test_make_day_plan_survives_spot_load_failure(monkeypatch):
-    def boom(tenant_id, area_id):
-        raise RuntimeError("db down")
-    monkeypatch.setattr(day_plan, "_load_spots", boom)
-    monkeypatch.setattr(day_plan, "list_areas", lambda tenant_id: [Area(id=HAKONE, code="hakone", name="箱根")])
-    monkeypatch.setattr(day_plan, "llm_api_key", lambda: None)
-    plan = day_plan.make_day_plan("t", [menu("s1", "stay", price=30000)], "箱根で温泉")
+AREAS = [Area(id=HAKONE, code="hakone", name="箱根"), Area(id=ATAMI, code="atami", name="熱海"),
+         Area(id="area-kyoto", code="kyoto", name="京都"), Area(id="area-okinawa", code="okinawa", name="沖縄")]
+
+
+def test_plan_area_ids_in_result_order():
+    menus = [menu("x1", "stay", area=None), menu("s1", "stay", area=ATAMI), menu("s2", "stay"),
+             menu("s3", "stay", area=ATAMI), menu("s4", "stay", area="area-kyoto"), menu("s5", "stay", area="area-okinawa")]
+    assert day_plan.plan_area_ids(menus) == [ATAMI, HAKONE, "area-kyoto"]
+    assert day_plan.plan_area_ids(menus, limit=5) == [ATAMI, HAKONE, "area-kyoto", "area-okinawa"]
+
+
+def test_build_day_plan_for_given_area():
+    menus = [menu("s1", "stay", area=ATAMI), menu("s2", "stay")]
+    plan = build_day_plan(menus, [], "箱根", area_id=HAKONE)
     assert plan is not None
-    assert plan.area_name == "箱根"
-    assert [i.kind for i in plan.items] == ["free", "free", "free", "benefit"]
-    assert plan.explanation == "箱根で、午前は自由時間、昼は自由時間、午後は自由時間、夜は施設s1に泊まるプランです。"
+    assert plan.area_id == HAKONE
+    assert plan.items[-1].name == "施設s2"
 
 
-def test_make_day_plan_uses_loaded_spots(monkeypatch):
+def test_make_day_plans_one_per_area(monkeypatch):
     calls = []
     def load(tenant_id, area_id):
         calls.append((tenant_id, area_id))
-        return [spot("sp1", "meal")]
+        return [spot(f"sp-{area_id}", "meal")]
     monkeypatch.setattr(day_plan, "_load_spots", load)
-    monkeypatch.setattr(day_plan, "list_areas", lambda tenant_id: [Area(id=HAKONE, code="hakone", name="箱根")])
+    monkeypatch.setattr(day_plan, "list_areas", lambda tenant_id: AREAS)
     monkeypatch.setattr(day_plan, "llm_api_key", lambda: None)
-    plan = day_plan.make_day_plan("t", [menu("s1", "stay")], "箱根で温泉")
-    assert plan is not None
-    assert calls == [("t", HAKONE)]
-    assert plan.items[1].name == "スポットsp1"
+    menus = [menu("s1", "stay", area=ATAMI), menu("s2", "stay"), menu("l1", "leisure", area=ATAMI)]
+    plans = day_plan.make_day_plans("t", menus, "温泉")
+    assert [(p.area_id, p.area_name) for p in plans] == [(ATAMI, "熱海"), (HAKONE, "箱根")]
+    assert calls == [("t", ATAMI), ("t", HAKONE)]
+    assert [i.name for i in plans[0].items] == ["施設l1", f"スポットsp-{ATAMI}", FREE_TIME, "施設s1"]
+    assert [i.name for i in plans[1].items] == [FREE_TIME, f"スポットsp-{HAKONE}", FREE_TIME, "施設s2"]
+    assert plans[1].explanation == f"箱根で、午前は自由時間、昼はスポットsp-{HAKONE}、午後は自由時間、夜は施設s2に泊まるプランです。"
 
 
-def test_make_day_plan_none_without_results():
-    assert day_plan.make_day_plan("t", [], "箱根で温泉") is None
+def test_make_day_plans_at_most_three(monkeypatch):
+    monkeypatch.setattr(day_plan, "_load_spots", lambda tenant_id, area_id: [])
+    monkeypatch.setattr(day_plan, "list_areas", lambda tenant_id: AREAS)
+    monkeypatch.setattr(day_plan, "llm_api_key", lambda: None)
+    menus = [menu(a.id, "stay", area=a.id) for a in AREAS]
+    plans = day_plan.make_day_plans("t", menus, "どこかに泊まりたい")
+    assert [p.area_name for p in plans] == ["箱根", "熱海", "京都"]
+
+
+def test_make_day_plans_survives_spot_load_failure(monkeypatch):
+    def boom(tenant_id, area_id):
+        raise RuntimeError("db down")
+    monkeypatch.setattr(day_plan, "_load_spots", boom)
+    monkeypatch.setattr(day_plan, "list_areas", lambda tenant_id: AREAS)
+    monkeypatch.setattr(day_plan, "llm_api_key", lambda: None)
+    plans = day_plan.make_day_plans("t", [menu("s1", "stay", price=30000)], "箱根で温泉")
+    assert len(plans) == 1
+    assert [i.kind for i in plans[0].items] == ["free", "free", "free", "benefit"]
+    assert plans[0].explanation == "箱根で、午前は自由時間、昼は自由時間、午後は自由時間、夜は施設s1に泊まるプランです。"
+
+
+def test_make_day_plans_empty_without_results():
+    assert day_plan.make_day_plans("t", [], "箱根で温泉") == []
 
 
 def test_picks_biggest_saving_per_slot():
