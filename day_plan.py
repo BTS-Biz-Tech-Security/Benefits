@@ -6,11 +6,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
+from db import table
 from models import Menu
 from nl_search import MODEL, llm_api_key
-from search import min_benefit_price
+from search import list_areas, min_benefit_price
 
 # (枠, 入れるカテゴリ)。この順に並べる
 SLOTS = [("午前", "leisure"), ("昼", "meal"), ("午後", "leisure"), ("夜", "stay")]
@@ -134,3 +135,30 @@ def explain(plan: DayPlan, request_text: str) -> str:
         if text:
             return text
     return explain_by_rule(plan)
+
+
+def _load_spots(tenant_id: str, area_id: str) -> list[Spot]:
+    """エリアの周辺スポット（共通のものと、そのテナントのもの）を名前順で返す。
+
+    仮の関数: spots の読み込みは spots.py（なかりんさん担当）の仕事。
+    spots.py ができたら、この関数の中身だけをその呼び出しに差し替える。
+    """
+    rows = (table("spots").select("id,kind,name,description,url").eq("area_id", area_id)
+            .or_(f"tenant_id.is.null,tenant_id.eq.{tenant_id}").order("name").execute().data)
+    return [Spot.from_row(cast(dict[str, Any], r)) for r in rows]
+
+
+def make_day_plan(tenant_id: str, menus: list[Menu], request_text: str) -> Optional[DayPlan]:
+    """画面から呼ぶ入口。エリアを決め、周辺スポットを読み、組み立て、説明文を付ける。組めなければ None。"""
+    area_id = plan_area_id(menus)
+    if area_id is None:
+        return None
+    try:
+        spots = _load_spots(tenant_id, area_id)
+    except Exception:  # 周辺スポットが読めなくても、福利厚生の施設だけで組む
+        spots = []
+    area_name = next((a.name for a in list_areas(tenant_id) if a.id == area_id), "")
+    plan = build_day_plan(menus, spots, area_name)
+    if plan is not None:
+        plan.explanation = explain(plan, request_text)
+    return plan

@@ -5,7 +5,7 @@ from typing import Optional
 
 import day_plan
 from day_plan import FREE_TIME, DayPlan, Spot, build_day_plan, plan_area_id
-from models import Menu, Plan
+from models import Area, Menu, Plan
 
 HAKONE = "area-hakone"
 ATAMI = "area-atami"
@@ -126,3 +126,34 @@ def test_explain_uses_ai_text(monkeypatch):
     monkeypatch.setattr(day_plan, "_explain_with_ai", lambda plan, request_text, api_key: "AIの説明です。")
     plan = built([menu("s1", "stay")], [])
     assert day_plan.explain(plan, "温泉に行きたい") == "AIの説明です。"
+
+
+def test_make_day_plan_survives_spot_load_failure(monkeypatch):
+    def boom(tenant_id, area_id):
+        raise RuntimeError("db down")
+    monkeypatch.setattr(day_plan, "_load_spots", boom)
+    monkeypatch.setattr(day_plan, "list_areas", lambda tenant_id: [Area(id=HAKONE, code="hakone", name="箱根")])
+    monkeypatch.setattr(day_plan, "llm_api_key", lambda: None)
+    plan = day_plan.make_day_plan("t", [menu("s1", "stay", price=30000)], "箱根で温泉")
+    assert plan is not None
+    assert plan.area_name == "箱根"
+    assert [i.kind for i in plan.items] == ["free", "free", "free", "benefit"]
+    assert plan.explanation == "箱根で、午前は自由時間、昼は自由時間、午後は自由時間、夜は施設s1に泊まるプランです。"
+
+
+def test_make_day_plan_uses_loaded_spots(monkeypatch):
+    calls = []
+    def load(tenant_id, area_id):
+        calls.append((tenant_id, area_id))
+        return [spot("sp1", "meal")]
+    monkeypatch.setattr(day_plan, "_load_spots", load)
+    monkeypatch.setattr(day_plan, "list_areas", lambda tenant_id: [Area(id=HAKONE, code="hakone", name="箱根")])
+    monkeypatch.setattr(day_plan, "llm_api_key", lambda: None)
+    plan = day_plan.make_day_plan("t", [menu("s1", "stay")], "箱根で温泉")
+    assert plan is not None
+    assert calls == [("t", HAKONE)]
+    assert plan.items[1].name == "スポットsp1"
+
+
+def test_make_day_plan_none_without_results():
+    assert day_plan.make_day_plan("t", [], "箱根で温泉") is None
