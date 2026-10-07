@@ -216,7 +216,7 @@ def test_saving_rate():
 
 def test_explain_by_rule_mentions_total_saving():
     plan = built([menu("s1", "stay", price=21000, list_price=30000)], [])
-    assert day_plan.explain_by_rule(plan).endswith("に泊まるプランです。合計で9,000円お得です。")
+    assert day_plan.explain_by_rule(plan).endswith("に泊まるプランです。1人あたり合計で9,000円お得です。")
 
 
 def test_marks_items_over_budget():
@@ -236,8 +236,8 @@ def test_explain_by_rule_mentions_over_budget():
     plan = build_day_plan([menu("s1", "stay", price=28800, list_price=48000)], [], "箱根", budget=20000)
     assert plan is not None
     assert day_plan.explain_by_rule(plan) == (
-        "箱根で、午前は自由時間、昼は自由時間、午後は自由時間、夜は施設s1に泊まるプランです。合計で19,200円お得です。"
-        "夜の施設s1は予算を8,800円超えますが、定価より19,200円お得です。")
+        "箱根で、午前は自由時間、昼は自由時間、午後は自由時間、夜は施設s1に泊まるプランです。1人あたり合計で19,200円お得です。"
+        "夜の施設s1は宿代の予算を8,800円超えますが、定価より19,200円お得です。")
 
 
 def test_explain_by_rule_alternative_prefix():
@@ -270,3 +270,63 @@ def test_make_day_plans_passes_budget(monkeypatch):
     monkeypatch.setattr(day_plan, "llm_api_key", lambda: None)
     plans = day_plan.make_day_plans("t", [menu("s1", "stay", price=28800, list_price=48000)], "箱根", budget=20000)
     assert plans[0].items[-1].over_budget == 8800
+
+
+def test_benefit_items_remember_menu_id():
+    # 施設名から詳細画面へ移れるよう、福利厚生の枠は施設の id を持つ。周辺スポットと自由時間は持たない
+    plan = built([menu("s1", "stay"), menu("l1", "leisure")], [spot("sp1", "meal")])
+    assert [(i.name, i.menu_id) for i in plan.items] == [
+        ("施設l1", "l1"), ("スポットsp1", None), (FREE_TIME, None), ("施設s1", "s1")]
+
+
+def test_over_budget_only_for_stay():
+    # 予算は宿代の上限なので、食事・レジャーには当てはめない
+    menus = [menu("s1", "stay", price=28800, list_price=48000), menu("m1", "meal", price=25000, list_price=30000),
+             menu("l1", "leisure", price=22000, list_price=26000)]
+    plan = build_day_plan(menus, [], "箱根", budget=20000)
+    assert plan is not None
+    assert [(i.name, i.over_budget) for i in plan.items if i.kind == "benefit"] == [
+        ("施設l1", None), ("施設m1", None), ("施設s1", 8800)]
+
+
+def stay_for_two(id: str, benefit_price: int, list_price: int, area: Optional[str] = HAKONE) -> Menu:
+    """2名1室の料金プランを持つ宿（料金は2人分）。"""
+    plan = Plan(id=f"p-{id}", menu_id=id, name="2名1室", list_price=list_price, benefit_price=benefit_price, adults=2)
+    return Menu(id=id, tenant_id="t", name=f"施設{id}", category="stay", area_id=area, plans=[plan])
+
+
+def test_stay_price_is_divided_by_people_in_plan():
+    # 2名1室 21,000円（定価30,000円）→ 1人あたり 10,500円・お得額 4,500円
+    night = built([stay_for_two("s1", 21000, 30000)], []).items[-1]
+    assert (night.price, night.list_price, night.saving) == (10500, 15000, 4500)
+    assert (night.plan_price, night.plan_people) == (21000, 2)
+
+
+def test_over_budget_uses_price_per_person():
+    # 宿代の予算 1人1万円: 1人あたり 10,500円なので、超えるのは 500円
+    plan = build_day_plan([stay_for_two("s1", 21000, 30000)], [], "箱根", budget=10000)
+    assert plan is not None
+    assert plan.items[-1].over_budget == 500
+
+
+def test_total_is_per_person():
+    menus = [stay_for_two("s1", 21000, 30000), menu("m1", "meal", price=2400, list_price=3000)]
+    plan = built(menus, [])
+    assert plan.total_price == 10500 + 2400
+    assert plan.total_saving == 4500 + 600
+
+
+def test_best_saving_plan_compares_per_person():
+    # 2名1室で 8,000円お得（1人 4,000円）と、1名で 5,000円お得なら、1人あたりで大きい後者を選ぶ
+    m = Menu(id="s1", tenant_id="t", name="施設s1", category="stay", area_id=HAKONE, plans=[
+        Plan(id="a", menu_id="s1", name="2名1室", list_price=28000, benefit_price=20000, adults=2),
+        Plan(id="b", menu_id="s1", name="1名1室", list_price=20000, benefit_price=15000, adults=1)])
+    best = day_plan.best_saving_plan(m)
+    assert best is not None and best.name == "1名1室"
+
+
+def test_benefit_item_budget_for_chosen_categories():
+    # 「施設を検索」タブでは、選んだカテゴリにも予算超えを付けられる
+    meal = menu("m1", "meal", price=6000, list_price=8000)
+    assert day_plan.benefit_item("", meal, 5000).over_budget is None  # 既定は宿だけ
+    assert day_plan.benefit_item("", meal, 5000, budget_categories=["meal"]).over_budget == 1000

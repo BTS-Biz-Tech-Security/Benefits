@@ -38,6 +38,15 @@ def count_keyword_hits(menu: Menu, keywords: Iterable[str]) -> int:
     return hits
 
 
+def per_person(amount: int, plan: Plan) -> int:
+    """料金プランの金額を1人あたりにする。料金は plan.adults 人分（宿は2名1室など）なので、その人数で割る。
+
+    人数が入っていない料金プランは、1人分とみなす。部屋数は考えない（1人あたりの金額で比べるだけ）。
+    """
+    people = plan.adults or 1
+    return round(amount / people)
+
+
 def min_benefit_price(menu: Menu) -> Optional[int]:
     """福利厚生価格の最安値。プランがなければ None。"""
     prices = [plan.benefit_price for plan in menu.plans]
@@ -45,11 +54,12 @@ def min_benefit_price(menu: Menu) -> Optional[int]:
 
 
 def filter_menus(menus: list[Menu], *, people: Optional[int] = None, budget: Optional[int] = None,
-                 keywords: Iterable[str] = ()) -> list[Menu]:
+                 keywords: Iterable[str] = (), budget_categories: Iterable[str] = ("stay",)) -> list[Menu]:
     """人数・予算・キーワードで絞り込み、並べ替えて返す。
 
     - 人数: 定員（max_people）が人数以上、または定員が未設定の施設
-    - 予算: 福利厚生価格が予算以下のプランがある施設（予算を指定したときは、プランのない施設は外す）
+    - 予算: 1人あたりの上限。budget_categories のカテゴリの施設だけに当てはめ、1人あたりの金額が予算以下のプランがない施設は外す。
+      既定は宿だけ（1日プラン提案の「宿代の予算」）。施設を検索タブでは、選んだカテゴリ（「すべて」なら全カテゴリ）を渡す
     - キーワード: 1つ以上含む施設。含む数の多い順、同数なら安い順
     """
     keywords = [k for k in keywords if k]
@@ -58,9 +68,9 @@ def filter_menus(menus: list[Menu], *, people: Optional[int] = None, budget: Opt
         # ① 人数: 定員が足りない施設を外す
         if people and menu.max_people is not None and menu.max_people < people:
             continue
-        # ② 予算: 予算内の料金プランが1つもない施設を外す
-        if budget:
-            prices = [plan.benefit_price for plan in menu.plans]
+        # ② 予算（1人あたり）: 予算を当てはめるカテゴリで、予算内の料金プランが1つもない施設を外す
+        if budget and menu.category in budget_categories:
+            prices = [per_person(plan.benefit_price, plan) for plan in menu.plans]
             if not prices or min(prices) > budget:
                 continue
         # ③ キーワード: 1つも含まない施設を外す
@@ -110,10 +120,31 @@ def fetch_menus(tenant_id: str, *, area_code: Optional[str] = None, category: Op
 
 def search_menus(tenant_id: str, *, area_code: Optional[str] = None, category: Optional[str] = None,
                  people: Optional[int] = None, budget: Optional[int] = None,
-                 keywords: Iterable[str] = ()) -> list[Menu]:
+                 keywords: Iterable[str] = (), budget_categories: Iterable[str] = ("stay",)) -> list[Menu]:
     """条件に合う施設を返す。指定しない条件（None・空）は絞り込みに使わない。
 
     area_code は areas.code（例: "hakone"）、category は models.CATEGORIES のキー（例: "stay"）。
+    budget_categories は予算を当てはめるカテゴリ（既定は宿だけ）。
     """
     menus = fetch_menus(tenant_id, area_code=area_code, category=category)
-    return filter_menus(menus, people=people, budget=budget, keywords=keywords)
+    return filter_menus(menus, people=people, budget=budget, keywords=keywords, budget_categories=list(budget_categories))
+
+
+def get_menu(menu_id: str, tenant_id: Optional[str] = None) -> Optional[Menu]:
+    """施設1件と、その料金プラン（福利厚生価格の安い順）。詳細画面で使う。見つからなければ None。
+
+    tenant_id を渡すと、そのテナントの施設だけを探す（他社の施設を開けないようにするため）。
+    """
+    # ① 施設を読む
+    query = table("menus").select(MENU_COLUMNS).eq("id", menu_id).is_("deleted_at", "null")
+    if tenant_id:
+        query = query.eq("tenant_id", tenant_id)
+    rows = rows_of(query.limit(1))
+    if not rows:
+        return None
+    menu = Menu.from_row(rows[0])
+
+    # ② 料金プランを、福利厚生価格の安い順に付ける
+    plan_query = table("plans").select("*").eq("menu_id", menu_id).is_("deleted_at", "null").order("benefit_price")
+    menu.plans = [Plan.from_row(r) for r in rows_of(plan_query)]
+    return menu

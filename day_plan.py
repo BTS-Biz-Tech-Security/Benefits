@@ -15,7 +15,7 @@ from typing import Any, Iterable, Optional
 from db import table
 from models import Menu, Plan
 from nl_search import MODEL, llm_api_key
-from search import list_areas, rows_of
+from search import list_areas, per_person, rows_of
 
 # 枠と、その枠に入れるカテゴリ（この順に並べる）
 SLOTS = [("午前", "leisure"), ("昼", "meal"), ("午後", "leisure"), ("夜", "stay")]
@@ -45,11 +45,15 @@ class PlanItem:
     description: Optional[str] = None
     url: Optional[str] = None
     # ここから下は福利厚生の施設だけに入る（お得額が最大の料金プランの値）。周辺スポットと自由時間は None
+    # 金額はすべて1人あたり（料金プランの金額を、その料金の人数で割ったもの）
+    menu_id: Optional[str] = None  # 施設の id。施設名から詳細画面へ移るときに使う
     plan_name: Optional[str] = None
-    list_price: Optional[int] = None  # 定価
-    price: Optional[int] = None  # 福利厚生価格
-    saving: Optional[int] = None  # お得額（定価 − 福利厚生価格）
-    over_budget: Optional[int] = None  # 予算を超える額。予算内か、予算の指定がなければ None
+    plan_price: Optional[int] = None  # 料金プランに書かれている福利厚生価格そのもの（例: 2名1室の料金）
+    plan_people: Optional[int] = None  # その料金が何人分か
+    list_price: Optional[int] = None  # 定価（1人あたり）
+    price: Optional[int] = None  # 福利厚生価格（1人あたり）
+    saving: Optional[int] = None  # お得額（定価 − 福利厚生価格。1人あたり）
+    over_budget: Optional[int] = None  # 宿代の予算を超える額。宿泊施設だけ。予算内か、予算の指定がなければ None
 
     @property
     def saving_rate(self) -> Optional[int]:
@@ -66,9 +70,9 @@ class DayPlan:
     area_name: str
     items: list[PlanItem]
     day_trip: bool  # 宿泊がなく日帰りのとき True
-    total_price: Optional[int]  # 福利厚生価格の合計
+    total_price: Optional[int]  # 福利厚生価格の合計（料金はすべて1人あたりとして扱うので、1人あたりの合計）
     explanation: str = ""
-    budget: Optional[int] = None  # 1つの料金プランあたりの予算
+    budget: Optional[int] = None  # 宿代の予算（1泊・1人あたり）。宿泊施設にだけ当てはめる
     alternative: bool = False  # 利用者が挙げたエリア以外の代替案のとき True
 
     @property
@@ -80,16 +84,23 @@ class DayPlan:
         return total
 
 
+def saving_per_person(plan: Plan) -> int:
+    """料金プランの1人あたりのお得額（定価 − 福利厚生価格を、その料金の人数で割ったもの）。"""
+    return per_person(plan.list_price - plan.benefit_price, plan)
+
+
 def best_saving_plan(menu: Menu) -> Optional[Plan]:
-    """施設の料金プランのうち、お得額が最大のもの。同額なら福利厚生価格が安いほう。プランがなければ None。"""
+    """施設の料金プランのうち、1人あたりのお得額が最大のもの。同額なら1人あたりの福利厚生価格が安いほう。
+    プランがなければ None。"""
     best = None
     for plan in menu.plans:
         if best is None:
             best = plan
             continue
-        saving = plan.list_price - plan.benefit_price
-        best_saving = best.list_price - best.benefit_price
-        if saving > best_saving or (saving == best_saving and plan.benefit_price < best.benefit_price):
+        saving = saving_per_person(plan)
+        best_saving = saving_per_person(best)
+        cheaper = per_person(plan.benefit_price, plan) < per_person(best.benefit_price, best)
+        if saving > best_saving or (saving == best_saving and cheaper):
             best = plan
     return best
 
@@ -110,14 +121,14 @@ def plan_area_id(menus: list[Menu]) -> Optional[str]:
 
 
 def _pick_menu(menus: list[Menu], category: str, used: set[str]) -> Optional[Menu]:
-    """カテゴリが合う、まだ使っていない施設のうち、お得額が最大のもの。同額なら検索結果で上のもの。"""
+    """カテゴリが合う、まだ使っていない施設のうち、1人あたりのお得額が最大のもの。同額なら検索結果で上のもの。"""
     best = None
     best_saving = 0
     for menu in menus:
         if menu.category != category or menu.id in used:
             continue
         plan = best_saving_plan(menu)
-        saving = plan.list_price - plan.benefit_price if plan else -1  # 料金プランのない施設は最後に回す
+        saving = saving_per_person(plan) if plan else -1  # 料金プランのない施設は最後に回す
         # 「より大きいとき」だけ入れ替えるので、同額なら先に見つかった（検索結果で上の）施設が残る
         if best is None or saving > best_saving:
             best = menu
@@ -133,18 +144,25 @@ def _pick_spot(spots: list[Spot], kind: str, used: set[str]) -> Optional[Spot]:
     return None
 
 
-def _benefit_item(slot: str, menu: Menu, budget: Optional[int]) -> PlanItem:
-    """福利厚生の施設を、プランの1枠にする。金額はお得額が最大の料金プランのもの。"""
-    item = PlanItem(slot=slot, kind="benefit", name=menu.name, category=menu.category, description=menu.description)
+def benefit_item(slot: str, menu: Menu, budget: Optional[int], budget_categories: Iterable[str] = ("stay",)) -> PlanItem:
+    """福利厚生の施設を、プランの1枠にする。金額はお得額が最大の料金プランのもので、1人あたりにする。
+
+    検索画面の施設一覧でも、1日プランと同じ金額を出すために使う。
+    """
+    item = PlanItem(slot=slot, kind="benefit", name=menu.name, category=menu.category, description=menu.description,
+                    menu_id=menu.id)
     plan = best_saving_plan(menu)
     if plan is None:
         return item
     item.plan_name = plan.name
-    item.list_price = plan.list_price
-    item.price = plan.benefit_price
-    item.saving = plan.list_price - plan.benefit_price
-    if budget and plan.benefit_price > budget:
-        item.over_budget = plan.benefit_price - budget
+    item.plan_price = plan.benefit_price
+    item.plan_people = plan.adults or 1
+    item.list_price = per_person(plan.list_price, plan)
+    item.price = per_person(plan.benefit_price, plan)
+    item.saving = item.list_price - item.price
+    # 予算（1人あたり）と、1人あたりの金額を比べる。既定は宿だけ（1日プランの「宿代の予算」）
+    if budget and menu.category in budget_categories and item.price > budget:
+        item.over_budget = item.price - budget
     return item
 
 
@@ -152,7 +170,8 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
                    area_id: Optional[str] = None, budget: Optional[int] = None) -> Optional[DayPlan]:
     """1つのエリアのプランを組む。area_id を省略すると、検索結果のいちばん上のエリアで組む。
 
-    予算を超える施設も選び、超える額を記録する（超えてもお得なことを、表示と説明文で伝えるため）。
+    宿代の予算を超える宿も選び、超える額を記録する（超えてもお得なことを、表示と説明文で伝えるため）。
+    予算は宿代の上限なので、食事・レジャーには当てはめない。
     DB も AI も使わない。
     """
     # ① エリアを決め、そのエリアの施設だけにする
@@ -169,7 +188,7 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
         menu = _pick_menu(area_menus, category, used)
         if menu is not None:
             used.add(menu.id)
-            items.append(_benefit_item(slot, menu, budget))
+            items.append(benefit_item(slot, menu, budget))
             continue
         if category == "stay":
             continue  # 周辺スポットには宿泊がないので、夜の枠は出さない（日帰り）
@@ -211,10 +230,10 @@ def explain_by_rule(plan: DayPlan) -> str:
 
     # ④ お得額の合計と、予算を超える施設
     if plan.total_saving > 0:
-        text += f"合計で{plan.total_saving:,}円お得です。"
+        text += f"1人あたり合計で{plan.total_saving:,}円お得です。"
     for item in plan.items:
         if item.over_budget:
-            text += f"{item.slot}の{item.name}は予算を{item.over_budget:,}円超えますが、定価より{item.saving or 0:,}円お得です。"
+            text += f"{item.slot}の{item.name}は宿代の予算を{item.over_budget:,}円超えますが、定価より{item.saving or 0:,}円お得です。"
     return text
 
 
@@ -229,15 +248,15 @@ def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
         if item.saving:
             line += f" 定価{item.list_price:,}円→福利厚生{item.price:,}円（{item.saving:,}円お得）"
         if item.over_budget:
-            line += f" ※予算を{item.over_budget:,}円超える"
+            line += f" ※宿代の予算を{item.over_budget:,}円超える"
         lines.append(line)
 
     # ② 指示文を組み立てる
     rules = [
         "プランに含まれる場所以外の施設や店の名前を出さないこと",
         "「自由時間」の枠は、その時間の過ごし方に一般的な言葉で触れる程度にすること",
-        "お得額があれば、合計でいくらお得かに触れること",
-        "予算を超える施設があれば、超える額とお得額の両方を示し、お得感の大きさを伝えること。お得額が超える額より小さいときは、そう正直に書くこと",
+        "金額はすべて1人あたり。お得額があれば、1人あたり合計でいくらお得かに触れること",
+        "宿代の予算を超える宿があれば、超える額とお得額の両方を示し、お得感の大きさを伝えること。お得額が超える額より小さいときは、そう正直に書くこと",
     ]
     if plan.alternative:
         rules.append("このプランは利用者が挙げたエリア以外からの代替案なので、冒頭でそのことを断り、代わりに勧める理由を書くこと")
@@ -248,11 +267,11 @@ def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
     prompt += "".join(f"- {rule}\n" for rule in rules)
     prompt += f"\nエリア：{plan.area_name}\n"
     if plan.budget:
-        prompt += f"予算（1つのプランあたり）：{plan.budget:,}円\n"
+        prompt += f"宿代の予算（1泊・1人あたり）：{plan.budget:,}円\n"
     if plan.day_trip:
         prompt += "宿泊：なし（日帰り）\n"
     prompt += "プラン：\n" + "\n".join(lines) + "\n"
-    prompt += f"合計のお得額：{plan.total_saving:,}円\n\n利用者の希望：{request_text}"
+    prompt += f"合計のお得額（1人あたり）：{plan.total_saving:,}円\n\n利用者の希望：{request_text}"
 
     # ③ AI に送る
     response = OpenAI(api_key=api_key).chat.completions.create(

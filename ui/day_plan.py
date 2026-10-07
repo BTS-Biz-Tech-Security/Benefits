@@ -1,28 +1,39 @@
 """1日プランの表示部品。組み立ては day_plan.py に任せ、ここは表示だけを持つ。
 
 「いくら得か」が一目で分かるよう、見出しの横に合計のお得額、各施設にお得額と割合を緑で出す。
-予算を超える施設には超える額を、利用者が挙げたエリア以外のプランには代替案であることを、バッジで示す。
+宿代の予算を超える宿には超える額を、利用者が挙げたエリア以外のプランには代替案であることを、バッジで示す。
 """
 from __future__ import annotations
 
+from typing import Optional
+
 import streamlit as st
 
-from day_plan import KIND_LABELS, DayPlan, PlanItem
+from day_plan import KIND_LABELS, DayPlan
+from ui.detail_page import open_detail
 
 
-def _price_text(item: PlanItem) -> str:
-    """「定価 30,000円 → 21,000円　9,000円お得（30%）」の形。お得額がなければ福利厚生価格だけ。"""
-    if item.price is None:
+def price_text(list_price: Optional[int], price: Optional[int], over_budget: Optional[int] = None,
+               plan_price: Optional[int] = None, plan_people: Optional[int] = None) -> str:
+    """「定価 15,000円 → 10,500円　4,500円お得（30%）（2名で21,000円）」の形。お得額がなければ福利厚生価格だけ。
+
+    金額は1人あたり。料金プランが2名分などのときは、料金プランに書かれた金額を（2名で〇〇円）と添える。
+    1日プランと、検索画面の施設一覧・詳細画面で使う（同じ見た目にそろえるため）。
+    """
+    if price is None:
         return ""
-    if not item.saving or item.list_price is None:
-        text = f"福利厚生 {item.price:,}円"
+    if list_price is None or list_price <= price:
+        text = f"福利厚生 {price:,}円"
     else:
-        old_price = f":gray[~~定価 {item.list_price:,}円~~ →]"  # ~~ ~~ は取り消し線
-        new_price = f"**{item.price:,}円**"
-        saving = f":green[**{item.saving:,}円お得**（{item.saving_rate}%）]"
-        text = f"{old_price} {new_price}　{saving}"
-    if item.over_budget:
-        text += f"　:orange-badge[予算＋{item.over_budget:,}円]"
+        saving = list_price - price
+        rate = round(saving * 100 / list_price)
+        old_price = f":gray[~~定価 {list_price:,}円~~ →]"  # ~~ ~~ は取り消し線
+        new_price = f"**{price:,}円**"
+        text = f"{old_price} {new_price}　:green[**{saving:,}円お得**（{rate}%）]"
+    if plan_people and plan_people > 1 and plan_price is not None:
+        text = ":gray[1人あたり] " + text + f"　:gray[（{plan_people}名で{plan_price:,}円）]"
+    if over_budget:
+        text += f"　:orange-badge[予算＋{over_budget:,}円]"
     return text
 
 
@@ -36,18 +47,23 @@ def render_day_plan(plan: DayPlan) -> None:
             title += "　:blue-badge[ご希望以外のエリアからの代替案]"
         col_title.markdown(title)
         if plan.total_saving > 0:
-            col_total.metric("合計のお得額", f"{plan.total_saving:,}円お得")
+            col_total.metric("合計のお得額（1人あたり）", f"{plan.total_saving:,}円お得")
 
-        # ② 枠ごとに「時間帯 ｜ 場所 ｜ 金額」の3列で並べる
+        # ② 枠ごとに「時間帯 ｜ 場所 ｜ 金額 ｜ 詳細を見る」の4列で並べる
         for item in plan.items:
-            col_slot, col_name, col_price = st.columns([1, 4, 5], vertical_alignment="center")
-            col_slot.markdown(f"**{item.slot}**")
+            col_slot, col_name, col_price, col_button = st.columns([1, 4, 5, 2], vertical_alignment="center")
+            col_slot.markdown(item.slot)  # 時間帯は普通の文字
             name = item.name
             if item.url:
                 name = f"[{item.name}]({item.url})"  # 周辺スポットにリンクがあれば、名前をリンクにする
             if item.kind == "benefit":
-                col_name.markdown(f"{name}　:gray[{item.plan_name or ''}]")
-                col_price.markdown(_price_text(item))
+                col_name.markdown(f"**{item.name}**")  # 福利厚生の施設名は太字
+                col_name.caption(item.plan_name or "")
+                col_price.markdown(price_text(item.list_price, item.price, item.over_budget, item.plan_price, item.plan_people))
+                # 福利厚生の施設は、「詳細を見る」ボタンで詳細画面に移れる
+                if item.menu_id:
+                    col_button.button("詳細を見る", key=f"day-plan-{plan.area_id}-{item.slot}-{item.menu_id}",
+                                      icon=":material/arrow_forward:", on_click=open_detail, args=(item.menu_id,))
             elif item.kind == "spot":
                 col_name.markdown(name)
                 col_price.markdown(f":gray[{KIND_LABELS[item.kind]}]")
@@ -58,6 +74,6 @@ def render_day_plan(plan: DayPlan) -> None:
         if plan.day_trip:
             st.caption("宿泊の施設が見つからなかったため、日帰りのプランです。")
         if plan.total_price is not None:
-            st.caption(f"福利厚生価格の合計：{plan.total_price:,}円")
+            st.caption(f"福利厚生価格の合計：{plan.total_price:,}円（1人あたり）")
         if plan.explanation:
             st.markdown(plan.explanation)

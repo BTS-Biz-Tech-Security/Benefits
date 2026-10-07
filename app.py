@@ -41,7 +41,11 @@ with st.sidebar:
         st.write(f"{user.name}（{user.department or ''}）")
         if PAGES:
             choice = st.radio("メニュー", list(PAGES.values()), label_visibility="collapsed")
-            st.session_state["page"] = next(k for k, v in PAGES.items() if v == choice)
+            chosen = next(k for k, v in PAGES.items() if v == choice)
+            # 詳細画面（メニューにない画面）を開いている間は、メニューの「検索」で上書きしない。
+            # 詳細画面からは「検索結果に戻る」で戻る。ほかのメニューを選んだときは、そちらに移る
+            if st.session_state.get("page") != "detail" or chosen != "search":
+                st.session_state["page"] = chosen
 
 # ④ 未ログインなら案内を出して止める（st.stop）
 if user is None:
@@ -55,4 +59,7 @@ if page is None:
     st.write(f"{user.name}さん、ようこそ。")
 elif page == "search":
     from ui.search_page import render
+    render()
+elif page == "detail":
+    from ui.detail_page import render
     render()
