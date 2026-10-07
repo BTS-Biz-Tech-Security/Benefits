@@ -1,4 +1,4 @@
-"""管理画面（人事・経営のみ）。メニュー管理、一括登録（仮）と、開発予定の2タブ（利用の記録・社内ツール連携）。"""
+"""管理画面（人事・経営のみ）。メニュー管理、一括登録と、開発予定の2タブ（利用の記録・社内ツール連携）。"""
 from __future__ import annotations
 
 import csv
@@ -20,7 +20,7 @@ def render() -> None:
     """管理画面。app.py から呼ばれる（メニューに出るのは人事・経営の人だけ）。"""
     user = require_role("hr", "executive")
     tab_menu, tab_import, tab_usage, tab_notify = st.tabs(
-        [":material/edit_note: メニュー管理", ":material/upload_file: 一括登録（仮）",
+        [":material/edit_note: メニュー管理", ":material/upload_file: 一括登録",
          ":material/bar_chart: 利用の記録（開発予定）", ":material/notifications: 社内ツール連携（開発予定）"])
     with tab_menu:
         _render_menus(user)
@@ -46,7 +46,7 @@ def _render_menus(user: User) -> None:
     # ① 自社の施設を読む
     query = table("menus").select(MENU_COLUMNS).eq("tenant_id", user.tenant_id).is_("deleted_at", "null").order("name")
     menus = [Menu.from_row(r) for r in rows_of(query)]
-    st.caption(f"{len(menus)}件。まとめて登録するときは「一括登録（仮）」タブを使います。")
+    st.caption(f"{len(menus)}件。まとめて登録するときは「一括登録」タブを使います。")
 
     # ② 施設を選ぶ（同じ名前の施設があっても区別できるよう、id で選ぶ）
     by_id = {menu.id: menu for menu in menus}
@@ -114,9 +114,9 @@ ALLOWED_PLAN_COLUMNS = ["menu_key", "name", "room_type", "meal", "grade", "adult
 
 
 def _render_import(user: User) -> None:
-    """一括登録（仮）タブ。施設と料金プランの CSV を選び、seed/load.py の取り込み処理で登録する。
+    """一括登録タブ。施設と料金プランの CSV を選び、seed/load.py の取り込み処理で登録する。
 
-    仮置き: 取り込みのルールは運用担当の seed/load.py をそのまま使う（同じ施設名は更新、なければ追加など）。
+    取り込みのルールは seed/load.py をそのまま使う（同じ施設名は更新、なければ追加など）。
     """
     st.caption("seed/menus.csv・seed/plans.csv と同じ列の CSV を選んでください。取り込みは seed/load.py と同じ処理で、"
                "同じ施設名の施設と、同じ施設の同じプラン名の料金プランは更新し、ないものは追加します。")
