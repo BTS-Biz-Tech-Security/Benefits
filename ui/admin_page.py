@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import io
+from datetime import datetime, timezone
 from typing import Optional
 
 import streamlit as st
@@ -42,21 +43,25 @@ def render() -> None:
 
 
 def _render_menus(user: User) -> None:
-    """メニュー管理タブ。自社の施設の一覧と、選んだ1件の編集フォーム。"""
+    """メニュー管理タブ。自社の施設の一覧と、選んだ1件の編集フォーム・削除。"""
     # ① 自社の施設を読む
     query = table("menus").select(MENU_COLUMNS).eq("tenant_id", user.tenant_id).is_("deleted_at", "null").order("name")
     menus = [Menu.from_row(r) for r in rows_of(query)]
     st.caption(f"{len(menus)}件。まとめて登録するときは「一括登録」タブを使います。")
+    message = st.session_state.pop("admin_message", None)  # 削除したあとの知らせ（1回だけ出す）
+    if message:
+        st.success(message)
 
     # ② 施設を選ぶ（同じ名前の施設があっても区別できるよう、id で選ぶ）
     by_id = {menu.id: menu for menu in menus}
-    picked = st.selectbox("編集するメニュー", [UNSELECTED, *by_id],
+    picked = st.selectbox("編集するメニュー", [UNSELECTED, *by_id], key="admin_menu_pick",
                           format_func=lambda key: by_id[key].name if key in by_id else key)
     if picked == UNSELECTED:
         st.table([{"施設名": m.name, "カテゴリ": CATEGORIES.get(m.category, m.category), "取得元の宿ID": m.hotel_ref or "",
                    "名寄せ済み": "○" if m.matched else ""} for m in menus])
         return
     _render_edit_form(user, by_id[picked])
+    _render_delete(user, by_id[picked])
 
 
 def _render_edit_form(user: User, menu: Menu) -> None:
@@ -95,6 +100,26 @@ def _render_edit_form(user: User, menu: Menu) -> None:
     # ③ 自社の施設だけを更新する（他社の施設の id を指定されても書き換えないよう、テナントでも絞る）
     table("menus").update(row).eq("id", menu.id).eq("tenant_id", user.tenant_id).execute()
     st.success("保存しました")
+
+
+def _render_delete(user: User, menu: Menu) -> None:
+    """施設の削除。確認のチェックを入れるまで押せない。"""
+    st.divider()
+    st.markdown("**この施設を削除**")
+    st.caption("削除すると、検索結果・1日プラン・この一覧に出なくなります。データは消さずに残すので、"
+               "戻すときは運用担当に DB の deleted_at を空にしてもらってください。削除した施設は、一括登録しても戻りません。")
+    confirmed = st.checkbox("削除してよいことを確認しました", key=f"confirm_delete_{menu.id}")
+    st.button("この施設を削除", icon=":material/delete:", disabled=not confirmed,
+              on_click=_delete_menu, args=(user.tenant_id, menu.id, menu.name))
+
+
+def _delete_menu(tenant_id: str, menu_id: str, name: str) -> None:
+    """施設を削除する（データは消さず、deleted_at に削除した日時を入れる）。自社の施設だけ。ボタンの on_click から呼ぶ。"""
+    now = datetime.now(timezone.utc).isoformat()
+    table("menus").update({"deleted_at": now}).eq("id", menu_id).eq("tenant_id", tenant_id).execute()
+    # 一覧に戻し、削除したことを知らせる
+    st.session_state["admin_menu_pick"] = UNSELECTED
+    st.session_state["admin_message"] = f"「{name}」を削除しました。"
 
 
 def _or_none(text: str) -> Optional[str]:
