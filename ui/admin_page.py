@@ -105,6 +105,12 @@ def _or_none(text: str) -> Optional[str]:
 
 # 一括登録で、施設の CSV に必要な列（seed/load.py の load_menus() が使う列）
 IMPORT_MENU_COLUMNS = ["key", "area_code", "name", "category"]
+# 一括登録で受け付ける列（seed/menus.csv・seed/plans.csv の列と同じ）。これ以外の列は捨ててから seed/load.py に渡す。
+# seed/load.py は列をそのまま DB に書くので、id・deleted_at などの列が紛れ込むと、その値まで書き換わってしまうため
+ALLOWED_MENU_COLUMNS = ["key", "area_code", "name", "category", "address", "description", "usage_limit", "family_scope",
+                        "cancel_policy", "hotel_ref", "content_updated_at", "tags"]
+ALLOWED_PLAN_COLUMNS = ["menu_key", "name", "room_type", "meal", "grade", "adults", "children", "nights", "list_price",
+                        "benefit_price", "coupon_code", "member_url"]
 
 
 def _render_import(user: User) -> None:
@@ -119,6 +125,13 @@ def _render_import(user: User) -> None:
     if menus_file is None:
         return
     _render_import_preview(user, menus_file.getvalue(), plans_file.getvalue() if plans_file else None)
+
+
+def _keep_allowed(rows: list[dict[str, str]], allowed: list[str]) -> tuple[list[dict[str, str]], list[str]]:
+    """受け付ける列だけを残した行と、捨てた列の名前を返す。"""
+    dropped = [c for c in (rows[0].keys() if rows else []) if c not in allowed]
+    kept = [{c: v for c, v in row.items() if c in allowed} for row in rows]
+    return kept, dropped
 
 
 def _read_csv(data: bytes) -> list[dict[str, str]]:
@@ -136,13 +149,17 @@ def _render_import_preview(user: User, menus_data: bytes, plans_data: Optional[b
         st.error("CSV は文字コード UTF-8 で保存してください（Excel では「CSV UTF-8」を選びます）")
         return
 
-    # ② 施設の CSV に必要な列があるか（足りないと seed/load.py が途中で止まるので、取り込む前に確かめる）
+    # ② 受け付ける列だけを残す（それ以外の列で DB の値が書き換わらないように）
+    menu_rows, dropped_menu = _keep_allowed(menu_rows, ALLOWED_MENU_COLUMNS)
+    plan_rows, dropped_plan = _keep_allowed(plan_rows, ALLOWED_PLAN_COLUMNS)
+
+    # ③ 施設の CSV に必要な列があるか（足りないと seed/load.py が途中で止まるので、取り込む前に確かめる）
     missing = [c for c in IMPORT_MENU_COLUMNS if menu_rows and c not in menu_rows[0]]
     if not menu_rows or missing:
         st.error("施設の CSV に必要な列がありません: " + ", ".join(missing or IMPORT_MENU_COLUMNS))
         return
 
-    # ③ 確認の表示。料金プランは seed/load.py と同じ決まりで、取り込まれない行を先に知らせる
+    # ④ 確認の表示。使わない列と、seed/load.py と同じ決まりで取り込まれない料金プランの行を先に知らせる
     keys = {row.get("key") for row in menu_rows}
     skipped = []
     for i, row in enumerate(plan_rows, start=2):  # 見出しを1行目として数える
@@ -154,10 +171,12 @@ def _render_import_preview(user: User, menus_data: bytes, plans_data: Optional[b
     col_menus, col_plans = st.columns(2)
     col_menus.metric("施設", f"{len(menu_rows)}行")
     col_plans.metric("料金プラン", f"{len(plan_rows) - len(skipped)}行")
+    if dropped_menu or dropped_plan:
+        st.info("次の列は取り込みに使いません: " + ", ".join(dropped_menu + dropped_plan))
     if skipped:
         st.warning("次の料金プランの行は取り込まれません（ほかの行は取り込みます）。\n\n" + "\n".join(skipped))
 
-    # ④ 取り込む（seed/load.py の処理を、ログインしている人の会社に対して呼ぶ）
+    # ⑤ 取り込む（seed/load.py の処理を、ログインしている人の会社に対して呼ぶ）
     if st.button("取り込む", type="primary", icon=":material/upload:"):
         db = client().schema(SCHEMA)
         key_to_id = load_menus(db, user.tenant_id, rows=menu_rows)
