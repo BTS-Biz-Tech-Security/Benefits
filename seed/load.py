@@ -53,6 +53,7 @@ def load_menus(c, tenant_id: str, rows: list[dict] | None = None) -> dict[str, s
     areas = {a["code"]: a["id"] for a in c.table("areas").select("id,code").is_("tenant_id", "null").execute().data}
     key_to_id: dict[str, str] = {}
     # ② 1行ずつ、施設名で既存を探して更新か追加。key→id の対応表を作る
+    #    削除済み（deleted_at に値がある）施設は探さない。同じ名前の行は新しい施設として追加する（管理画面で削除した施設を入れ直せる）
     for row in (read_csv("menus.csv") if rows is None else rows):
         row = blank_to_none(row)
         key = row.pop("key")
@@ -61,7 +62,8 @@ def load_menus(c, tenant_id: str, rows: list[dict] | None = None) -> dict[str, s
         row["tenant_id"] = tenant_id
         row["matched"] = bool(row.get("hotel_ref"))
         row["tags"] = [t for t in (row.get("tags") or "").split("|") if t]
-        existing = c.table("menus").select("id").eq("tenant_id", tenant_id).eq("name", row["name"]).limit(1).execute().data
+        existing = (c.table("menus").select("id").eq("tenant_id", tenant_id).eq("name", row["name"])
+                    .is_("deleted_at", "null").limit(1).execute().data)
         if existing:
             c.table("menus").update(row).eq("id", existing[0]["id"]).execute()
             key_to_id[key] = existing[0]["id"]

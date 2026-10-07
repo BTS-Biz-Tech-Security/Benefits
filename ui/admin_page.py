@@ -106,8 +106,8 @@ def _render_delete(user: User, menu: Menu) -> None:
     """施設の削除。確認のチェックを入れるまで押せない。"""
     st.divider()
     st.markdown("**この施設を削除**")
-    st.caption("削除すると、検索結果・1日プラン・この一覧に出なくなります。データは消さずに残すので、"
-               "戻すときは運用担当に DB の deleted_at を空にしてもらってください。削除した施設は、一括登録しても戻りません。")
+    st.caption("削除すると、検索結果・1日プラン・この一覧に出なくなります。データは消さずに残します。"
+               "同じ施設名の行を一括登録すると、新しい施設として追加されます（削除した施設の料金プランは引き継ぎません）。")
     confirmed = st.checkbox("削除してよいことを確認しました", key=f"confirm_delete_{menu.id}")
     st.button("この施設を削除", icon=":material/delete:", disabled=not confirmed,
               on_click=_delete_menu, args=(user.tenant_id, menu.id, menu.name))
