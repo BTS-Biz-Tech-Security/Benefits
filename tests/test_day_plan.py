@@ -255,6 +255,16 @@ def test_make_day_plans_requested_areas_first(monkeypatch):
     assert [(p.area_name, p.alternative) for p in plans] == [("箱根", False), ("熱海", False), ("沖縄", True)]
 
 
+def test_make_day_plans_requested_area_matches_part_of_name(monkeypatch):
+    areas = AREAS + [Area(id="area-matsue", code="matsue", name="松江・出雲")]
+    monkeypatch.setattr(day_plan, "_load_spots", lambda tenant_id, area_id: [])
+    monkeypatch.setattr(day_plan, "list_areas", lambda tenant_id: areas)
+    monkeypatch.setattr(day_plan, "llm_api_key", lambda: None)
+    menus = [menu("s1", "stay"), menu("s2", "stay", area="area-matsue")]
+    plans = day_plan.make_day_plans("t", menus, "出雲に行きたい", requested_area_names=["出雲", "島"])
+    assert [(p.area_name, p.alternative) for p in plans] == [("松江・出雲", False), ("箱根", True)]
+
+
 def test_make_day_plans_without_requested_areas_has_no_alternative(monkeypatch):
     monkeypatch.setattr(day_plan, "_load_spots", lambda tenant_id, area_id: [])
     monkeypatch.setattr(day_plan, "list_areas", lambda tenant_id: AREAS)

@@ -12,10 +12,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
-from db import table
 from models import Menu, Plan
 from nl_search import MODEL, llm_api_key
-from search import list_areas, per_person, rows_of
+from search import list_areas, per_person
+from spots import spots_by_area
 
 # 枠と、その枠に入れるカテゴリ（この順に並べる）
 SLOTS = [("午前", "leisure"), ("昼", "meal"), ("午後", "leisure"), ("夜", "stay")]
@@ -296,15 +296,9 @@ def explain(plan: DayPlan, request_text: str) -> str:
 
 
 def _load_spots(tenant_id: str, area_id: str) -> list[Spot]:
-    """エリアの周辺スポット（共通のものと、そのテナントのもの）を名前順で返す。
-
-    仮の関数: spots の読み込みは spots.py（なかりんさん担当）の仕事。
-    spots.py ができたら、この関数の中身だけをその呼び出しに差し替える。
-    """
-    query = (table("spots").select("id,kind,name,description,url").eq("area_id", area_id)
-             .or_(f"tenant_id.is.null,tenant_id.eq.{tenant_id}").order("name"))
+    """エリアの周辺スポット（共通のものと、そのテナントのもの）。読み込みは spots.py に任せ、Spot の形にそろえる。"""
     spots: list[Spot] = []
-    for r in rows_of(query):
+    for r in spots_by_area(area_id, tenant_id):
         spots.append(Spot(id=r["id"], kind=r["kind"], name=r["name"], description=r.get("description"), url=r.get("url")))
     return spots
 
@@ -326,7 +320,9 @@ def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget:
         area_names[area.id] = area.name
 
     # ② 利用者が挙げたエリアがあれば、それを先に、ほかを後ろに並べ替える
-    requested = [name for name in requested_area_names if name in area_names.values()]
+    # エリア名の一部でも当たりにする（「出雲」で「松江・出雲」、「高山」で「飛騨高山」）。1文字の語は誤って当たりやすいので使わない
+    words = [w for w in requested_area_names if w and len(w) >= 2]
+    requested = [name for name in area_names.values() if any(w in name for w in words)]
     if requested:
         first = [a for a in area_ids if area_names.get(a) in requested]
         rest = [a for a in area_ids if area_names.get(a) not in requested]

@@ -8,11 +8,19 @@ from typing import Any, Optional
 # 種別の固定値（DBの説明列と揃える）
 CATEGORIES = {"stay": "宿泊", "meal": "食事", "leisure": "レジャー"}
 ROLES = {"employee": "従業員", "hr": "人事", "executive": "経営"}
+# 口コミの細分化した星（列名: 表示名）。楽天トラベルの評価項目に合わせる。カテゴリに合わない項目は使わない
+SUB_RATINGS = {"rating_service": "サービス", "rating_location": "立地", "rating_room": "部屋",
+               "rating_equipment": "設備・アメニティ", "rating_bath": "風呂", "rating_meal": "食事"}
+SUB_RATINGS_BY_CATEGORY = {
+    "stay": list(SUB_RATINGS),
+    "leisure": ["rating_service", "rating_location", "rating_equipment"],
+    "meal": ["rating_service", "rating_location", "rating_meal"],
+}
 ACTIVITY_KINDS = {"login": "ログイン", "coupon": "クーポン使用", "click": "予約ページを開いた"}
 
 # menus を読むときの列。embedding（ベクトル）は大きいので画面用には読まない
 MENU_COLUMNS = ("id,tenant_id,name,category,area_id,address,description,photo_url,procedure,usage_limit,family_scope,"
-                "cancel_policy,max_people,hotel_ref,matched,content_updated_at,tags")
+                "cancel_policy,max_people,hotel_ref,matched,content_updated_at,tags,external_rating,external_review_count")
 
 
 @dataclass
@@ -88,6 +96,8 @@ class Menu:
     photo_url: Optional[str] = None
     content_updated_at: Optional[str] = None
     tags: list[str] = field(default_factory=list)
+    external_rating: Optional[float] = None  # 外部サイト（楽天トラベル）の星の平均。宿以外は空
+    external_review_count: Optional[int] = None  # 外部サイトの口コミ件数
     plans: list[Plan] = field(default_factory=list)
     # 検索のときだけ入る値（DBの列ではない）。並べ替えに使う
     keyword_hits: int = 0
@@ -102,6 +112,8 @@ class Menu:
             cancel_policy=r.get("cancel_policy"), max_people=r.get("max_people"),
             hotel_ref=r.get("hotel_ref"), matched=bool(r.get("matched", False)), photo_url=r.get("photo_url"), content_updated_at=r.get("content_updated_at"),
             tags=list(r.get("tags") or []),
+            external_rating=float(r["external_rating"]) if r.get("external_rating") is not None else None,
+            external_review_count=r.get("external_review_count"),
         )
 
 
@@ -138,12 +150,20 @@ class Post:
     created_at: datetime
     user_name: str = ""
     photo_url: Optional[str] = None
+    deal_rating: Optional[int] = None  # お得感の満足度（1〜5）
+    sub_ratings: dict[str, int] = field(default_factory=dict)  # 細分化した星 {列名: 1〜5}。入力のある項目だけ
+    used_at: Optional[str] = None  # 利用時期（YYYY-MM-DD）
+    user_family: str = ""  # 投稿者の属性（users.family）
 
     @classmethod
     def from_row(cls, r: dict[str, Any]) -> "Post":
+        user = r.get("users") if isinstance(r.get("users"), dict) else {}
         return cls(
             id=r["id"], menu_id=r["menu_id"], user_id=r["user_id"], rating=int(r["rating"]),
             comment=r.get("comment"), created_at=datetime.fromisoformat(str(r["created_at"]).replace("Z", "+00:00")),
-            user_name=(r.get("users") or {}).get("name", "") if isinstance(r.get("users"), dict) else "",
-            photo_url=r.get("photo_url"),
+            user_name=user.get("name") or "", photo_url=r.get("photo_url"),
+            deal_rating=int(r["deal_rating"]) if r.get("deal_rating") is not None else None,
+            sub_ratings={k: int(r[k]) for k in SUB_RATINGS if r.get(k) is not None},
+            used_at=str(r["used_at"]) if r.get("used_at") else None,
+            user_family=user.get("family") or "",
         )
