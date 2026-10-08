@@ -20,7 +20,7 @@ ACTIVITY_KINDS = {"login": "ログイン", "coupon": "クーポン使用", "clic
 
 # menus を読むときの列。embedding（ベクトル）は大きいので画面用には読まない
 MENU_COLUMNS = ("id,tenant_id,name,category,area_id,address,description,photo_url,procedure,usage_limit,family_scope,"
-                "cancel_policy,max_people,hotel_ref,matched,content_updated_at,tags")
+                "cancel_policy,max_people,hotel_ref,matched,content_updated_at,tags,external_rating,external_review_count")
 
 
 @dataclass
@@ -96,6 +96,8 @@ class Menu:
     photo_url: Optional[str] = None
     content_updated_at: Optional[str] = None
     tags: list[str] = field(default_factory=list)
+    external_rating: Optional[float] = None  # 外部サイト（楽天トラベル）の星の平均。宿以外は空
+    external_review_count: Optional[int] = None  # 外部サイトの口コミ件数
     plans: list[Plan] = field(default_factory=list)
     # 検索のときだけ入る値（DBの列ではない）。並べ替えに使う
     keyword_hits: int = 0
@@ -110,6 +112,8 @@ class Menu:
             cancel_policy=r.get("cancel_policy"), max_people=r.get("max_people"),
             hotel_ref=r.get("hotel_ref"), matched=bool(r.get("matched", False)), photo_url=r.get("photo_url"), content_updated_at=r.get("content_updated_at"),
             tags=list(r.get("tags") or []),
+            external_rating=float(r["external_rating"]) if r.get("external_rating") is not None else None,
+            external_review_count=r.get("external_review_count"),
         )
 
 
