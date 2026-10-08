@@ -47,13 +47,14 @@ def validate_plan(row: dict) -> str | None:
     return None
 
 
-def load_menus(c, tenant_id: str) -> dict[str, str]:
-    """menus.csv を投入し、key→id の対応表を返す。"""
+def load_menus(c, tenant_id: str, rows: list[dict] | None = None) -> dict[str, str]:
+    """menus.csv を投入し、key→id の対応表を返す。rows を渡すと、menus.csv の代わりにその行を投入する（管理画面の一括登録用）。"""
     # ① 共通エリアを code→id にする
     areas = {a["code"]: a["id"] for a in c.table("areas").select("id,code").is_("tenant_id", "null").execute().data}
     key_to_id: dict[str, str] = {}
     # ② 1行ずつ、施設名で既存を探して更新か追加。key→id の対応表を作る
-    for row in read_csv("menus.csv"):
+    #    削除済み（deleted_at に値がある）施設は探さない。同じ名前の行は新しい施設として追加する（管理画面で削除した施設を入れ直せる）
+    for row in (read_csv("menus.csv") if rows is None else rows):
         row = blank_to_none(row)
         key = row.pop("key")
         area_code = row.pop("area_code")
@@ -61,7 +62,8 @@ def load_menus(c, tenant_id: str) -> dict[str, str]:
         row["tenant_id"] = tenant_id
         row["matched"] = bool(row.get("hotel_ref"))
         row["tags"] = [t for t in (row.get("tags") or "").split("|") if t]
-        existing = c.table("menus").select("id").eq("tenant_id", tenant_id).eq("name", row["name"]).limit(1).execute().data
+        existing = (c.table("menus").select("id").eq("tenant_id", tenant_id).eq("name", row["name"])
+                    .is_("deleted_at", "null").limit(1).execute().data)
         if existing:
             c.table("menus").update(row).eq("id", existing[0]["id"]).execute()
             key_to_id[key] = existing[0]["id"]
@@ -72,11 +74,11 @@ def load_menus(c, tenant_id: str) -> dict[str, str]:
     return key_to_id
 
 
-def load_plans(c, key_to_id: dict[str, str]) -> None:
-    """plans.csv を検証して投入する。"""
+def load_plans(c, key_to_id: dict[str, str], rows: list[dict] | None = None) -> int:
+    """plans.csv を検証して投入し、投入した件数を返す。rows を渡すと、plans.csv の代わりにその行を投入する（管理画面の一括登録用）。"""
     # ① 1行ずつ検証し、違反した行は飛ばして表示する
     n = 0
-    for row in read_csv("plans.csv"):
+    for row in (read_csv("plans.csv") if rows is None else rows):
         row = blank_to_none(row)
         err = validate_plan(row)
         if err:
@@ -98,6 +100,7 @@ def load_plans(c, key_to_id: dict[str, str]) -> None:
             c.table("plans").insert(row).execute()
         n += 1
     print(f"plans: {n}件")
+    return n
 
 
 def load_users(c, tenant_id: str) -> None:
