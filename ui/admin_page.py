@@ -1,8 +1,6 @@
-"""管理画面（人事・経営のみ）。メニュー管理、一括登録と、開発予定の2タブ（利用の記録・社内ツール連携）。"""
+"""管理画面（人事・経営のみ）。メニュー管理、一括登録、自動取得（見た目のみ）と、開発予定の2タブ（利用の記録・社内ツール連携）。"""
 from __future__ import annotations
 
-import csv
-import io
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -11,6 +9,7 @@ import streamlit as st
 from db import SCHEMA, client, table
 from models import CATEGORIES, MENU_COLUMNS, Menu, User
 from search import rows_of
+from menu_import import COMBINED_COLUMNS, missing_columns, read_csv_bytes, split_rows, template_csv
 from seed.load import load_menus, load_plans, validate_plan
 from session import require_role
 
@@ -20,13 +19,15 @@ UNSELECTED = "（選択）"
 def render() -> None:
     """管理画面。app.py から呼ばれる（メニューに出るのは人事・経営の人だけ）。"""
     user = require_role("hr", "executive")
-    tab_menu, tab_import, tab_usage, tab_notify = st.tabs(
-        [":material/edit_note: メニュー管理", ":material/upload_file: 一括登録",
+    tab_menu, tab_import, tab_crawl, tab_usage, tab_notify = st.tabs(
+        [":material/edit_note: メニュー管理", ":material/upload_file: 一括登録", ":material/sync: 自動取得（開発予定）",
          ":material/bar_chart: 利用の記録（開発予定）", ":material/notifications: 社内ツール連携（開発予定）"])
     with tab_menu:
         _render_menus(user)
     with tab_import:
         _render_import(user)
+    with tab_crawl:
+        _render_crawl()
     with tab_usage:
         # 見た目のみ（第6回決定）。集計は MVP のあとに作る
         st.caption("クーポン使用数・予約ページを開いた数・ログイン数を期間で集計します。MVP では見た目のみです。")
@@ -128,80 +129,75 @@ def _or_none(text: str) -> Optional[str]:
     return text or None
 
 
-# 一括登録で、施設の CSV に必要な列（seed/load.py の load_menus() が使う列）
-IMPORT_MENU_COLUMNS = ["key", "area_code", "name", "category"]
-# 一括登録で受け付ける列（seed/menus.csv・seed/plans.csv の列と同じ）。これ以外の列は捨ててから seed/load.py に渡す。
-# seed/load.py は列をそのまま DB に書くので、id・deleted_at などの列が紛れ込むと、その値まで書き換わってしまうため
-ALLOWED_MENU_COLUMNS = ["key", "area_code", "name", "category", "address", "description", "usage_limit", "family_scope",
-                        "cancel_policy", "hotel_ref", "content_updated_at", "tags"]
-ALLOWED_PLAN_COLUMNS = ["menu_key", "name", "room_type", "meal", "grade", "adults", "children", "nights", "list_price",
-                        "benefit_price", "coupon_code", "member_url"]
+# 自動取得タブの履歴の見本（見た目のみ。第10回MTG）。本来は取得のたびに記録される
+CRAWL_HISTORY_SAMPLE = [
+    {"日時": "2026/10/08 06:00", "結果": "完了", "新規": 2, "更新": 15, "提携終了": 0, "備考": ""},
+    {"日時": "2026/10/07 06:00", "結果": "完了", "新規": 0, "更新": 3, "提携終了": 1, "備考": ""},
+    {"日時": "2026/10/06 06:00", "結果": "一部失敗", "新規": 1, "更新": 12, "提携終了": 0, "備考": "3件のページを読めませんでした"},
+]
+
+
+def _render_crawl() -> None:
+    """自動取得タブ（見た目のみ）。本来の仕組み（福利厚生サービスの会員サイトから定期的に集める）を見せる。"""
+    st.caption("本来は、福利厚生サービスの会員サイトに定期的にログインして、施設と料金プランを自動で集めます。"
+               "MVP では見た目のみで、実際の登録は「一括登録」タブの CSV で行います。")
+    # ① 取得の設定（操作はできない）
+    col_source, col_schedule = st.columns([2, 1])
+    col_source.text_input("取得元", "福利厚生サービスの会員サイト（URL とログイン情報を登録）", disabled=True)
+    col_schedule.selectbox("自動取得の頻度", ["毎日 6:00"], disabled=True)
+    st.button("今すぐ取得する（開発予定）", icon=":material/sync:", disabled=True)
+    # ② 取得の履歴（見本）
+    st.markdown("**取得の履歴**　:gray[（表示は見本です）]")
+    st.dataframe(CRAWL_HISTORY_SAMPLE, hide_index=True, use_container_width=True)
 
 
 def _render_import(user: User) -> None:
-    """一括登録タブ。施設と料金プランの CSV を選び、seed/load.py の取り込み処理で登録する。
+    """一括登録タブ。施設と料金プランを1つにまとめた CSV を選び、seed/load.py の取り込み処理で登録する。
 
+    1行が料金プラン1件。同じ施設の行は施設の列をくり返す（menu_import.py が施設と料金プランに分ける）。
     取り込みのルールは seed/load.py をそのまま使う（同じ施設名は更新、なければ追加など）。
     """
-    st.caption("seed/menus.csv・seed/plans.csv と同じ列の CSV を選んでください。取り込みは seed/load.py と同じ処理で、"
+    st.caption("施設と料金プランを1つにまとめた CSV を選んでください。1行が料金プラン1件で、同じ施設の行は施設の列をくり返します。"
+               "料金プランの列（plan_ で始まる列）が空の行は、施設だけを登録します。"
                "同じ施設名の施設と、同じ施設の同じプラン名の料金プランは更新し、ないものは追加します。")
-    menus_file = st.file_uploader("施設の CSV（必須）", type="csv", key="import_menus")
-    plans_file = st.file_uploader("料金プランの CSV（任意）", type="csv", key="import_plans")
-    if menus_file is None:
+    st.download_button("見本の CSV をダウンロード", template_csv(), file_name="menus_plans_template.csv",
+                       mime="text/csv", icon=":material/download:")
+    data_file = st.file_uploader("施設・料金プランの CSV", type="csv", key="import_combined")
+    if data_file is None:
         return
-    _render_import_preview(user, menus_file.getvalue(), plans_file.getvalue() if plans_file else None)
+    _render_import_preview(user, data_file.getvalue())
 
 
-def _keep_allowed(rows: list[dict[str, str]], allowed: list[str]) -> tuple[list[dict[str, str]], list[str]]:
-    """受け付ける列だけを残した行と、捨てた列の名前を返す。"""
-    dropped = [c for c in (rows[0].keys() if rows else []) if c not in allowed]
-    kept = [{c: v for c, v in row.items() if c in allowed} for row in rows]
-    return kept, dropped
-
-
-def _read_csv(data: bytes) -> list[dict[str, str]]:
-    """選ばれた CSV ファイルの中身を、行（列名 → 文字）の一覧にする。Excel で保存した CSV の先頭の印（BOM）も読める。"""
-    return list(csv.DictReader(io.StringIO(data.decode("utf-8-sig"))))
-
-
-def _render_import_preview(user: User, menus_data: bytes, plans_data: Optional[bytes]) -> None:
+def _render_import_preview(user: User, data: bytes) -> None:
     """選んだ CSV の確認の表示と、「取り込む」ボタン。"""
-    # ① CSV を読む
+    # ① CSV を読み、必要な列があるか確かめる
     try:
-        menu_rows = _read_csv(menus_data)
-        plan_rows = _read_csv(plans_data) if plans_data else []
+        rows = read_csv_bytes(data)
     except UnicodeDecodeError:
         st.error("CSV は文字コード UTF-8 で保存してください（Excel では「CSV UTF-8」を選びます）")
         return
-
-    # ② 受け付ける列だけを残す（それ以外の列で DB の値が書き換わらないように）
-    menu_rows, dropped_menu = _keep_allowed(menu_rows, ALLOWED_MENU_COLUMNS)
-    plan_rows, dropped_plan = _keep_allowed(plan_rows, ALLOWED_PLAN_COLUMNS)
-
-    # ③ 施設の CSV に必要な列があるか（足りないと seed/load.py が途中で止まるので、取り込む前に確かめる）
-    missing = [c for c in IMPORT_MENU_COLUMNS if menu_rows and c not in menu_rows[0]]
-    if not menu_rows or missing:
-        st.error("施設の CSV に必要な列がありません: " + ", ".join(missing or IMPORT_MENU_COLUMNS))
+    missing = missing_columns(rows)
+    if not rows or missing:
+        st.error("CSV に必要な列がありません: " + ", ".join(missing or ["key", "area_code", "name", "category"]))
         return
 
-    # ④ 確認の表示。使わない列と、seed/load.py と同じ決まりで取り込まれない料金プランの行を先に知らせる
-    keys = {row.get("key") for row in menu_rows}
+    # ② 施設と料金プランに分ける。使わない列と、まとめるときの問題を知らせる
+    dropped = [c for c in rows[0].keys() if c not in COMBINED_COLUMNS]
+    menu_rows, plan_rows, problems = split_rows(rows)
     skipped = []
-    for i, row in enumerate(plan_rows, start=2):  # 見出しを1行目として数える
-        reason = validate_plan(row)
-        if reason is None and row.get("menu_key") not in keys:
-            reason = "menu_key が施設の CSV にありません"
+    for plan in plan_rows:
+        reason = validate_plan(plan)
         if reason:
-            skipped.append(f"- {i}行目（{row.get('name') or '名前なし'}）: {reason}")
+            skipped.append(f"- {plan['menu_key']}（{plan['name']}）: {reason}")
     col_menus, col_plans = st.columns(2)
-    col_menus.metric("施設", f"{len(menu_rows)}行")
-    col_plans.metric("料金プラン", f"{len(plan_rows) - len(skipped)}行")
-    if dropped_menu or dropped_plan:
-        st.info("次の列は取り込みに使いません: " + ", ".join(dropped_menu + dropped_plan))
-    if skipped:
-        st.warning("次の料金プランの行は取り込まれません（ほかの行は取り込みます）。\n\n" + "\n".join(skipped))
+    col_menus.metric("施設", f"{len(menu_rows)}件")
+    col_plans.metric("料金プラン", f"{len(plan_rows) - len(skipped)}件")
+    if dropped:
+        st.info("次の列は取り込みに使いません: " + ", ".join(dropped))
+    if problems or skipped:
+        st.warning("次の行は、確認してください（ほかの行は取り込みます）。\n\n" + "\n".join([f"- {p}" for p in problems] + skipped))
 
-    # ⑤ 取り込む（seed/load.py の処理を、ログインしている人の会社に対して呼ぶ）
+    # ③ 取り込む（seed/load.py の処理を、ログインしている人の会社に対して呼ぶ）
     if st.button("取り込む", type="primary", icon=":material/upload:"):
         db = client().schema(SCHEMA)
         key_to_id = load_menus(db, user.tenant_id, rows=menu_rows)
