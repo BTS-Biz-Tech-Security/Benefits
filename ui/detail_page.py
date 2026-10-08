@@ -10,6 +10,8 @@ import streamlit as st
 from models import CATEGORIES, Menu
 from search import get_menu, per_person
 from session import require_login
+from ui.review_tab import render_review_tab
+from ui.spots_tab import render_spots_tab
 
 # カテゴリごとのバッジの色とアイコン
 CATEGORY_BADGES = {
@@ -63,11 +65,9 @@ def render() -> None:
     with tab_plans:
         _render_plans_and_conditions(menu)
     with tab_reviews:
-        # TODO(ui/review_tab.py): なかりんさん担当。render_review_tab(user, menu) ができたら、この1行をその呼び出しに置き換える
-        st.info("口コミは準備中です。")
+        render_review_tab(user, menu)
     with tab_spots:
-        # TODO(ui/spots_tab.py): なかりんさん担当。render_spots_tab(menu) ができたら、この1行をその呼び出しに置き換える
-        st.info("周辺情報は準備中です。")
+        render_spots_tab(user, menu)
 
 
 def _render_plans_and_conditions(menu: Menu) -> None:
