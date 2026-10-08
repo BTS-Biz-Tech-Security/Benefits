@@ -320,7 +320,9 @@ def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget:
         area_names[area.id] = area.name
 
     # ② 利用者が挙げたエリアがあれば、それを先に、ほかを後ろに並べ替える
-    requested = [name for name in requested_area_names if name in area_names.values()]
+    # エリア名の一部でも当たりにする（「出雲」で「松江・出雲」、「高山」で「飛騨高山」）。1文字の語は誤って当たりやすいので使わない
+    words = [w for w in requested_area_names if w and len(w) >= 2]
+    requested = [name for name in area_names.values() if any(w in name for w in words)]
     if requested:
         first = [a for a in area_ids if area_names.get(a) in requested]
         rest = [a for a in area_ids if area_names.get(a) not in requested]
