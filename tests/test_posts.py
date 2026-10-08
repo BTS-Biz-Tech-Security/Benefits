@@ -45,3 +45,9 @@ def test_post_from_row_reads_new_fields():
                        "rating_bath": None, "used_at": "2026-09-20", "users": {"name": "木下 亮", "family": "夫婦"}})
     assert p.deal_rating == 5 and p.sub_ratings == {"rating_room": 4}
     assert p.user_name == "木下 亮" and p.user_family == "夫婦" and p.used_at == "2026-09-20"
+
+
+def test_summarize_sub_averages_use_answered_only():
+    from posts import summarize
+    s = summarize([4, 5, 3], [None, None, None], [{"rating_bath": 5, "rating_meal": 3}, {"rating_bath": 4}, {}])
+    assert s.sub_averages == {"rating_bath": 4.5, "rating_meal": 3.0}
