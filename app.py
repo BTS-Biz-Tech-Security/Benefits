@@ -19,6 +19,7 @@ ASSETS = Path(__file__).resolve().parent / "assets"
 # メニューに出す画面 {キー: 表示名}
 PAGES: dict[str, str] = {
     "search": ":material/search: 検索",
+    "mypage": ":material/confirmation_number: クーポン使用履歴",
 }
 
 # ① ページ設定とロゴ（st.set_page_config・st.logo）
@@ -78,4 +79,7 @@ elif page == "detail":
     render()
 elif page == "admin":
     from ui.admin_page import render
+    render()
+elif page == "mypage":
+    from ui.mypage import render
     render()
