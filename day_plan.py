@@ -22,6 +22,8 @@ SLOTS = [("午前", "leisure"), ("昼", "meal"), ("午後", "leisure"), ("夜", 
 NIGHT = "夜"
 FREE_TIME = "自由時間"
 MAX_PLANS = 3
+# 1日プラン提案で、宿代の予算の何倍までの宿を残すか。超えてもお得な宿を、超える額とあわせて見せるため
+BUDGET_ALLOWANCE = 1.5
 KIND_LABELS = {"benefit": "福利厚生", "spot": "周辺スポット", "free": "自由時間"}
 
 
@@ -89,11 +91,19 @@ def saving_per_person(plan: Plan) -> int:
     return per_person(plan.list_price - plan.benefit_price, plan)
 
 
-def best_saving_plan(menu: Menu) -> Optional[Plan]:
+def best_saving_plan(menu: Menu, max_price: Optional[float] = None) -> Optional[Plan]:
     """施設の料金プランのうち、1人あたりのお得額が最大のもの。同額なら1人あたりの福利厚生価格が安いほう。
-    プランがなければ None。"""
+    プランがなければ None。
+
+    max_price（1人あたりの上限）を渡すと、上限以内のプランの中から選ぶ。上限以内のプランがなければ、すべてのプランから選ぶ。
+    """
+    plans = menu.plans
+    if max_price is not None:
+        within = [plan for plan in plans if per_person(plan.benefit_price, plan) <= max_price]
+        if within:
+            plans = within
     best = None
-    for plan in menu.plans:
+    for plan in plans:
         if best is None:
             best = plan
             continue
@@ -120,14 +130,24 @@ def plan_area_id(menus: list[Menu]) -> Optional[str]:
     return area_ids[0] if area_ids else None
 
 
-def _pick_menu(menus: list[Menu], category: str, used: set[str]) -> Optional[Menu]:
-    """カテゴリが合う、まだ使っていない施設のうち、1人あたりのお得額が最大のもの。同額なら検索結果で上のもの。"""
+def price_limit(menu: Menu, budget: Optional[int], budget_categories: Iterable[str] = ("stay",),
+                budget_allowance: Optional[float] = None) -> Optional[float]:
+    """表示するプランの1人あたりの上限（予算 × budget_allowance）。予算か倍率がないとき、予算を当てはめないカテゴリのときは None。"""
+    if not budget or budget_allowance is None or menu.category not in budget_categories:
+        return None
+    return budget * budget_allowance
+
+
+def _pick_menu(menus: list[Menu], category: str, used: set[str], budget: Optional[int] = None,
+               budget_allowance: Optional[float] = None) -> Optional[Menu]:
+    """カテゴリが合う、まだ使っていない施設のうち、1人あたりのお得額が最大のもの。同額なら検索結果で上のもの。
+    お得額は、表示するプラン（予算 × budget_allowance 以内のもの）で比べる。"""
     best = None
     best_saving = 0
     for menu in menus:
         if menu.category != category or menu.id in used:
             continue
-        plan = best_saving_plan(menu)
+        plan = best_saving_plan(menu, price_limit(menu, budget, budget_allowance=budget_allowance))
         saving = saving_per_person(plan) if plan else -1  # 料金プランのない施設は最後に回す
         # 「より大きいとき」だけ入れ替えるので、同額なら先に見つかった（検索結果で上の）施設が残る
         if best is None or saving > best_saving:
@@ -144,14 +164,17 @@ def _pick_spot(spots: list[Spot], kind: str, used: set[str]) -> Optional[Spot]:
     return None
 
 
-def benefit_item(slot: str, menu: Menu, budget: Optional[int], budget_categories: Iterable[str] = ("stay",)) -> PlanItem:
+def benefit_item(slot: str, menu: Menu, budget: Optional[int], budget_categories: Iterable[str] = ("stay",),
+                 budget_allowance: Optional[float] = None) -> PlanItem:
     """福利厚生の施設を、プランの1枠にする。金額はお得額が最大の料金プランのもので、1人あたりにする。
 
+    budget_allowance を渡すと、予算 × budget_allowance 以内のプランの中からお得額が最大のものを選ぶ
+    （1日プラン提案で、予算を大きく超えるプランを出さないため）。渡さなければ、すべてのプランから選ぶ（施設を検索タブ）。
     検索画面の施設一覧でも、1日プランと同じ金額を出すために使う。
     """
     item = PlanItem(slot=slot, kind="benefit", name=menu.name, category=menu.category, description=menu.description,
                     menu_id=menu.id)
-    plan = best_saving_plan(menu)
+    plan = best_saving_plan(menu, price_limit(menu, budget, budget_categories, budget_allowance))
     if plan is None:
         return item
     item.plan_name = plan.name
@@ -167,10 +190,12 @@ def benefit_item(slot: str, menu: Menu, budget: Optional[int], budget_categories
 
 
 def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
-                   area_id: Optional[str] = None, budget: Optional[int] = None) -> Optional[DayPlan]:
+                   area_id: Optional[str] = None, budget: Optional[int] = None,
+                   budget_allowance: Optional[float] = None) -> Optional[DayPlan]:
     """1つのエリアのプランを組む。area_id を省略すると、検索結果のいちばん上のエリアで組む。
 
     宿代の予算を超える宿も選び、超える額を記録する（超えてもお得なことを、表示と説明文で伝えるため）。
+    budget_allowance を渡すと、宿のプランは予算 × budget_allowance 以内のものから選ぶ。
     予算は宿代の上限なので、食事・レジャーには当てはめない。
     DB も AI も使わない。
     """
@@ -185,10 +210,10 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
     used: set[str] = set()
     items: list[PlanItem] = []
     for slot, category in SLOTS:
-        menu = _pick_menu(area_menus, category, used)
+        menu = _pick_menu(area_menus, category, used, budget, budget_allowance)
         if menu is not None:
             used.add(menu.id)
-            items.append(benefit_item(slot, menu, budget))
+            items.append(benefit_item(slot, menu, budget, budget_allowance=budget_allowance))
             continue
         if category == "stay":
             continue  # 周辺スポットには宿泊がないので、夜の枠は出さない（日帰り）
@@ -310,6 +335,7 @@ def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget:
     menus は検索結果の順位順に並んでいる前提（順位は ranking.py が決める）。
     requested_area_names（利用者が挙げたエリア名）があれば、そのエリアのプランを先に並べ、
     それ以外のエリアのプランは代替案として後ろに並べる。合わせて最大 MAX_PLANS 個。
+    宿のプランは、宿代の予算 × BUDGET_ALLOWANCE 以内のものから選ぶ。
     """
     # ① 検索結果に出てくるエリアを、上から順に全部取り出す
     area_ids = plan_area_ids(menus, limit=len(menus))
@@ -336,7 +362,7 @@ def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget:
         except Exception:  # 周辺スポットが読めなくても、福利厚生の施設だけで組む
             spots = []
         area_name = area_names.get(area_id, "")
-        plan = build_day_plan(menus, spots, area_name, area_id=area_id, budget=budget)
+        plan = build_day_plan(menus, spots, area_name, area_id=area_id, budget=budget, budget_allowance=BUDGET_ALLOWANCE)
         if plan is None:
             continue
         plan.alternative = bool(requested) and area_name not in requested

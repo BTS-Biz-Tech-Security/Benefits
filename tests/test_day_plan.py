@@ -340,3 +340,24 @@ def test_benefit_item_budget_for_chosen_categories():
     meal = menu("m1", "meal", price=6000, list_price=8000)
     assert day_plan.benefit_item("", meal, 5000).over_budget is None  # 既定は宿だけ
     assert day_plan.benefit_item("", meal, 5000, budget_categories=["meal"]).over_budget == 1000
+
+
+def test_best_saving_plan_within_price_limit():
+    # 上限（1人1.5万円）を渡すと、上限以内のプランの中でお得額が最大のものを選ぶ。デラックス（1人2万450円）は選ばない
+    standard = Plan(id="p1", menu_id="s1", name="スタンダード", list_price=40000, benefit_price=26000, adults=2)
+    deluxe = Plan(id="p2", menu_id="s1", name="デラックス", list_price=56000, benefit_price=40900, adults=2)
+    m = Menu(id="s1", tenant_id="t", name="宿", category="stay", plans=[standard, deluxe])
+    assert day_plan.best_saving_plan(m).name == "デラックス"
+    assert day_plan.best_saving_plan(m, max_price=15000).name == "スタンダード"
+    # 上限以内のプランがなければ、すべてのプランから選ぶ
+    assert day_plan.best_saving_plan(m, max_price=5000).name == "デラックス"
+
+
+def test_benefit_item_with_allowance_shows_plan_within_limit():
+    standard = Plan(id="p1", menu_id="s1", name="スタンダード", list_price=40000, benefit_price=26000, adults=2)
+    deluxe = Plan(id="p2", menu_id="s1", name="デラックス", list_price=56000, benefit_price=40900, adults=2)
+    m = Menu(id="s1", tenant_id="t", name="宿", category="stay", plans=[standard, deluxe])
+    item = day_plan.benefit_item("夜", m, 10000, budget_allowance=1.5)
+    assert (item.plan_name, item.price, item.over_budget, item.saving) == ("スタンダード", 13000, 3000, 7000)
+    # 倍率を渡さなければ（施設を検索タブ）、これまでどおりお得額が最大のプラン
+    assert day_plan.benefit_item("夜", m, 10000).plan_name == "デラックス"

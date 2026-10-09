@@ -13,7 +13,7 @@ from typing import Any, Iterable, Optional
 
 import streamlit as st
 
-from day_plan import DayPlan, benefit_item, make_day_plans
+from day_plan import BUDGET_ALLOWANCE, DayPlan, benefit_item, make_day_plans
 from models import CATEGORIES, Menu
 from nl_search import SEARCH_FOCUS_OPTIONS, ai_available, parse_plan
 from search import list_areas, search_menus
@@ -53,12 +53,13 @@ NOT_FOUND = "条件に合う施設が見つかりませんでした。条件を�
 
 
 def _render_menu_list(menus: list[Menu], key_prefix: str, budget: Optional[int] = None,
-                      budget_categories: Iterable[str] = ("stay",)) -> None:
+                      budget_categories: Iterable[str] = ("stay",), budget_allowance: Optional[float] = None) -> None:
     """施設の一覧をカードで並べる。両方のタブで使う。「詳細を見る」ボタンで詳細画面に移る。
 
     key_prefix はボタンの名前の頭に付ける文字。同じ施設が両方のタブに出ても、ボタンの名前が重ならないようにする。
     budget（1人あたり）を渡すと、budget_categories のカテゴリの施設で予算を超えるものに「予算＋〇〇円」のバッジを付ける。
     既定は宿だけ（1日プラン提案の「宿代の予算」）。施設を検索タブでは、選んだカテゴリ（「すべて」なら全カテゴリ）を渡す。
+    budget_allowance を渡すと、予算 × budget_allowance 以内のプランの金額を出す（1日プラン提案タブ。1日プランと同じ金額にするため）。
 
     TODO(results_page.py): この一覧は仮のもの。一覧の表示と並び替えは ui/results_page.py（じゅんぺいさん担当）の役割なので、
     results_page.py ができたら、この関数の中身をその表示（render_results）の呼び出しに置き換える。
@@ -66,7 +67,7 @@ def _render_menu_list(menus: list[Menu], key_prefix: str, budget: Optional[int] 
     for menu in menus:
         # 1日プランと同じく、お得額が最大の料金プランの金額を出す
         # 1日プランと同じ計算（お得額が最大の料金プラン、1人あたりの金額、宿だけ予算と比べる）
-        item = benefit_item("", menu, budget, budget_categories)
+        item = benefit_item("", menu, budget, budget_categories, budget_allowance)
         with st.container(border=True):
             # 左に施設の情報、右に「詳細を見る」ボタン
             col_info, col_button = st.columns([5, 1], vertical_alignment="center")
@@ -91,7 +92,7 @@ def _render_plans_and_list(menus: list[Menu], plans: list[DayPlan], budget: Opti
     for plan in plans:
         render_day_plan(plan)
     with st.expander(f"検索結果の施設一覧（{len(menus)}件）"):
-        _render_menu_list(menus, key_prefix="plan-tab", budget=budget)
+        _render_menu_list(menus, key_prefix="plan-tab", budget=budget, budget_allowance=BUDGET_ALLOWANCE)
 
 
 def _text_tab(tenant_id: str) -> None:
@@ -121,7 +122,9 @@ def _text_tab(tenant_id: str) -> None:
                     words = [item.get("keyword", "") for item in parsed["keywords"]]
 
                     # ② 検索し、1日プランを組む。キーワードにエリア名があれば、そのエリアのプランを先に、ほかは代替案として並べる
-                    menus = search_menus(tenant_id, people=conditions["people"], budget=conditions["budget"], keywords=words)
+                    # 宿は予算の1.5倍（BUDGET_ALLOWANCE）まで残し、超える額はバッジで示す。「施設を検索」タブは予算ちょうどまで
+                    menus = search_menus(tenant_id, people=conditions["people"], budget=conditions["budget"], keywords=words,
+                                         budget_allowance=BUDGET_ALLOWANCE)
                     plans = make_day_plans(tenant_id, menus, plan_text, budget=conditions["budget"], requested_area_names=words)
 
                     # ③ 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく

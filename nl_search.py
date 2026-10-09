@@ -140,6 +140,9 @@ def _build_prompt(plan_text: str, focus: str) -> str:
         "- 予算は計算せず、書かれている金額（円）をそのまま budget_amount に整数で入れること（「1万円」なら10000）。"
         "その金額が1人あたりなら budget_per_person を true、1泊あたりなら budget_per_night を true にすること"
         "（例：「1人1泊1万円」→ budget_amount 10000、budget_per_person true、budget_per_night true）。"
+        "budget_per_night は、金額が1泊分か（true）、複数泊の合計か（false）で決めること。"
+        "「1泊2万円」なら true（合計に直さず 20000 のまま）、「2泊の合計で6万円」「全部で6万円」なら false"
+        "（例：「3人・2泊の合計で6万円」→ budget_amount 60000、budget_per_person false、budget_per_night false、nights 2）。"
         "泊数が書かれていれば nights に整数で入れること\n"
         "- 出力は次のJSON形式のみとすること: "
         '{"summary": "施設選びの条件の要約（1文）", '
