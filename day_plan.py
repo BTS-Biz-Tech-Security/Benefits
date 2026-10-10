@@ -126,11 +126,6 @@ def plan_saving(plan: Plan, market: Optional[MarketPrice]) -> PriceCompare:
     return PriceCompare(benefit_price, compared_price, compared_to, saving, saving_rate)
 
 
-def saving_per_person(plan: Plan, market: Optional[MarketPrice] = None) -> int:
-    """料金プランの1人あたりのお得額（plan_saving のお得額）。"""
-    return plan_saving(plan, market).saving
-
-
 def best_saving_plan(menu: Menu, max_price: Optional[float] = None,
                      markets: Optional[MarketsByPlan] = None) -> Optional[Plan]:
     """施設の料金プランのうち、1人あたりのお得額が最大のもの。同額なら1人あたりの福利厚生価格が安いほう。
@@ -151,8 +146,8 @@ def best_saving_plan(menu: Menu, max_price: Optional[float] = None,
         if best is None:
             best = plan
             continue
-        saving = saving_per_person(plan, markets.get(plan.id))
-        best_saving = saving_per_person(best, markets.get(best.id))
+        saving = plan_saving(plan, markets.get(plan.id)).saving
+        best_saving = plan_saving(best, markets.get(best.id)).saving
         cheaper = per_person(plan.benefit_price, plan) < per_person(best.benefit_price, best)
         if saving > best_saving or (saving == best_saving and cheaper):
             best = plan
@@ -195,7 +190,7 @@ def _pick_menu(menus: list[Menu], category: str, used: set[str], budget: Optiona
             continue
         plan = best_saving_plan(menu, price_limit(menu, budget, budget_allowance=budget_allowance), markets)
         # 料金プランのない施設は最後に回す（一般サイトの方が安い施設のお得額はマイナスなので、それよりも後ろ）
-        saving = saving_per_person(plan, (markets or {}).get(plan.id)) if plan else None
+        saving = plan_saving(plan, (markets or {}).get(plan.id)).saving if plan else None
         # 「より大きいとき」だけ入れ替えるので、同額なら先に見つかった（検索結果で上の）施設が残る
         if best is None or (saving is not None and (best_saving is None or saving > best_saving)):
             best = menu
