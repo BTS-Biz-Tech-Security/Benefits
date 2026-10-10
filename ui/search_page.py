@@ -32,7 +32,8 @@ def _areas(tenant_id: str) -> dict[str, str]:
 
 
 def format_conditions(conditions: dict[str, Any]) -> str:
-    """「宿泊日：指定なし ・ 人数：4人 ・ 宿代の予算：指定なし」の形の文字列にする。"""
+    """「宿泊日：指定なし ・ 人数：4人 ・ 宿代の予算：指定なし」の形の文字列にする。
+    日帰りなら「利用日：… ・ 人数：… ・ 宿泊：なし（日帰り）」の形にする（宿代の予算はないため）。"""
     date_text = people_text = budget_text = "指定なし"
     stay_date = conditions["stay_date"]
     if stay_date:
@@ -41,6 +42,8 @@ def format_conditions(conditions: dict[str, Any]) -> str:
         people_text = f"{conditions['people']}人"
     if conditions["budget"]:
         budget_text = f"{conditions['budget']:,}円（1泊・1人あたり）"
+    if conditions.get("day_trip"):
+        return f"利用日：{date_text} ・ 人数：{people_text} ・ 宿泊：なし（日帰り）"
     return f"宿泊日：{date_text} ・ 人数：{people_text} ・ 宿代の予算：{budget_text}"
 
 
@@ -131,7 +134,7 @@ def _text_tab(tenant_id: str) -> None:
                     # お得額は、一般サイトの価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
                     markets = load_market_prices(menus)
                     plans = make_day_plans(tenant_id, menus, plan_text, budget=conditions["budget"], requested_area_names=words,
-                                           markets=markets)
+                                           markets=markets, day_trip=conditions["day_trip"])
 
                     # ③ 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
                     st.session_state["search_text_result"] = {"parsed": parsed, "menus": menus, "plans": plans,
