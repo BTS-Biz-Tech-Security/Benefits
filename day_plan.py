@@ -1,7 +1,8 @@
 """1日プランの組み立て。検索結果の施設と周辺スポットから、午前・昼・午後・夜のプランを組む。
 
 - プランはエリアごとに1つ。検索結果に出てくるエリアを上から順に、最大 MAX_PLANS 個まで組む
-- 各枠には、同じエリア・同じカテゴリの施設のうち、お得額（定価 − 福利厚生価格）が最大のものを入れる
+- 各枠には、同じエリア・同じカテゴリの施設のうち、お得額が最大のものを入れる。
+  お得額は料金プランごとに、一般サイトの価格が取れたプランはそれ、取れなかったプランは定価と、福利厚生価格との差（compare_price）
 - 足りない枠は周辺スポットで補い、それもなければ「自由時間」にする
 - 説明文は、AI のキーがあれば AI、なければ決まった文の型で作る
 
@@ -12,8 +13,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
-from models import Menu, Plan
+from db import table
+from models import MarketPrice, Menu, Plan
 from nl_search import MODEL, llm_api_key
+from pricing import normalize
 from search import list_areas, per_person
 from spots import spots_by_area
 
@@ -54,15 +57,11 @@ class PlanItem:
     plan_people: Optional[int] = None  # その料金が何人分か
     list_price: Optional[int] = None  # 定価（1人あたり）
     price: Optional[int] = None  # 福利厚生価格（1人あたり）
-    saving: Optional[int] = None  # お得額（定価 − 福利厚生価格。1人あたり）
+    compared_price: Optional[int] = None  # 比べる価格（1人あたり）。一般サイトの価格があればそれ、なければ定価
+    compared_to: Optional[str] = None  # 比べる相手（"一般サイト" / "定価"）
+    saving: Optional[int] = None  # お得額（比べる価格 − 福利厚生価格。1人あたり）。一般サイトの方が安ければマイナス
+    saving_rate: Optional[int] = None  # お得額の割合（%、四捨五入）
     over_budget: Optional[int] = None  # 宿代の予算を超える額。宿泊施設だけ。予算内か、予算の指定がなければ None
-
-    @property
-    def saving_rate(self) -> Optional[int]:
-        """お得額の割合（%、四捨五入）。item.saving_rate のように、値と同じ書き方で読める。"""
-        if not self.saving or not self.list_price:
-            return None
-        return round(self.saving * 100 / self.list_price)
 
 
 @dataclass
@@ -79,24 +78,69 @@ class DayPlan:
 
     @property
     def total_saving(self) -> int:
-        """お得額の合計。plan.total_saving のように、値と同じ書き方で読める。"""
+        """お得額の合計。plan.total_saving のように、値と同じ書き方で読める。
+        一般サイトの方が安い施設（お得額がマイナス）は、合計に入れない。"""
         total = 0
         for item in self.items:
-            total += item.saving or 0
+            if item.saving and item.saving > 0:
+                total += item.saving
         return total
 
 
-def saving_per_person(plan: Plan) -> int:
-    """料金プランの1人あたりのお得額（定価 − 福利厚生価格を、その料金の人数で割ったもの）。"""
-    return per_person(plan.list_price - plan.benefit_price, plan)
+# 料金プランの id → そのプランの一般サイトの価格。取れなかったプランは入っていない
+MarketsByPlan = dict[str, MarketPrice]
+
+COMPARED_TO_MARKET = "一般サイト"
+COMPARED_TO_LIST = "定価"
 
 
-def best_saving_plan(menu: Menu, max_price: Optional[float] = None) -> Optional[Plan]:
+@dataclass
+class PriceCompare:
+    """福利厚生価格と、比べる価格（一般サイトの価格か定価）。金額はすべて1人あたり。"""
+    benefit_price: int
+    compared_price: int
+    compared_to: str  # "一般サイト" / "定価"
+    saving: int  # 比べる価格 − 福利厚生価格。一般サイトの方が安ければマイナス
+    saving_rate: int  # お得額の割合（%、四捨五入）。比べる価格が0なら0
+
+
+# TODO(pricing.py): pricing.compare_price（じゅんぺいさん担当）ができたら、この関数と PriceCompare を消し、
+# 「from pricing import compare_price」に置き換える。引数と戻り値は compare_price と同じにしてある
+def compare_price(plan: Plan, market: Optional[MarketPrice]) -> PriceCompare:
+    """料金プランの福利厚生価格を、一般サイトの価格（なければ定価）と比べる。金額は1人あたり。
+
+    一般サイトの価格は、プランの人数・泊数にそろえてから（pricing.normalize）1人あたりにする。
+    """
+    # ① 比べる価格を決める。一般サイトの価格があればそれ、なければ定価
+    if market is not None:
+        market_price, _ = normalize(market, plan)
+        compared_price = per_person(market_price, plan)
+        compared_to = COMPARED_TO_MARKET
+    else:
+        compared_price = per_person(plan.list_price, plan)
+        compared_to = COMPARED_TO_LIST
+    # ② 1人あたりの福利厚生価格と、お得額・割合
+    benefit_price = per_person(plan.benefit_price, plan)
+    saving = compared_price - benefit_price
+    saving_rate = round(saving * 100 / compared_price) if compared_price else 0
+    return PriceCompare(benefit_price, compared_price, compared_to, saving, saving_rate)
+
+
+def saving_per_person(plan: Plan, market: Optional[MarketPrice] = None) -> int:
+    """料金プランの1人あたりのお得額（compare_price のお得額）。"""
+    return compare_price(plan, market).saving
+
+
+def best_saving_plan(menu: Menu, max_price: Optional[float] = None,
+                     markets: Optional[MarketsByPlan] = None) -> Optional[Plan]:
     """施設の料金プランのうち、1人あたりのお得額が最大のもの。同額なら1人あたりの福利厚生価格が安いほう。
     プランがなければ None。
 
     max_price（1人あたりの上限）を渡すと、上限以内のプランの中から選ぶ。上限以内のプランがなければ、すべてのプランから選ぶ。
+    markets（料金プランの id → 一般サイトの価格）を渡すと、一般サイトの価格が取れたプランはそれと、
+    取れなかったプランは定価と比べたお得額で選ぶ。
     """
+    markets = markets or {}
     plans = menu.plans
     if max_price is not None:
         within = [plan for plan in plans if per_person(plan.benefit_price, plan) <= max_price]
@@ -107,8 +151,8 @@ def best_saving_plan(menu: Menu, max_price: Optional[float] = None) -> Optional[
         if best is None:
             best = plan
             continue
-        saving = saving_per_person(plan)
-        best_saving = saving_per_person(best)
+        saving = saving_per_person(plan, markets.get(plan.id))
+        best_saving = saving_per_person(best, markets.get(best.id))
         cheaper = per_person(plan.benefit_price, plan) < per_person(best.benefit_price, best)
         if saving > best_saving or (saving == best_saving and cheaper):
             best = plan
@@ -139,18 +183,21 @@ def price_limit(menu: Menu, budget: Optional[int], budget_categories: Iterable[s
 
 
 def _pick_menu(menus: list[Menu], category: str, used: set[str], budget: Optional[int] = None,
-               budget_allowance: Optional[float] = None) -> Optional[Menu]:
+               budget_allowance: Optional[float] = None,
+               markets: Optional[MarketsByPlan] = None) -> Optional[Menu]:
     """カテゴリが合う、まだ使っていない施設のうち、1人あたりのお得額が最大のもの。同額なら検索結果で上のもの。
-    お得額は、表示するプラン（予算 × budget_allowance 以内のもの）で比べる。"""
+    お得額は、表示するプラン（予算 × budget_allowance 以内のもの）で比べる。
+    markets（料金プランの id → 一般サイトの価格）にあるプランは一般サイトの価格と、ないプランは定価と比べる。"""
     best = None
-    best_saving = 0
+    best_saving: Optional[int] = None
     for menu in menus:
         if menu.category != category or menu.id in used:
             continue
-        plan = best_saving_plan(menu, price_limit(menu, budget, budget_allowance=budget_allowance))
-        saving = saving_per_person(plan) if plan else -1  # 料金プランのない施設は最後に回す
+        plan = best_saving_plan(menu, price_limit(menu, budget, budget_allowance=budget_allowance), markets)
+        # 料金プランのない施設は最後に回す（一般サイトの方が安い施設のお得額はマイナスなので、それよりも後ろ）
+        saving = saving_per_person(plan, (markets or {}).get(plan.id)) if plan else None
         # 「より大きいとき」だけ入れ替えるので、同額なら先に見つかった（検索結果で上の）施設が残る
-        if best is None or saving > best_saving:
+        if best is None or (saving is not None and (best_saving is None or saving > best_saving)):
             best = menu
             best_saving = saving
     return best
@@ -165,24 +212,30 @@ def _pick_spot(spots: list[Spot], kind: str, used: set[str]) -> Optional[Spot]:
 
 
 def benefit_item(slot: str, menu: Menu, budget: Optional[int], budget_categories: Iterable[str] = ("stay",),
-                 budget_allowance: Optional[float] = None) -> PlanItem:
+                 budget_allowance: Optional[float] = None, markets: Optional[MarketsByPlan] = None) -> PlanItem:
     """福利厚生の施設を、プランの1枠にする。金額はお得額が最大の料金プランのもので、1人あたりにする。
 
+    お得額は compare_price で計算する。markets（料金プランの id → 一般サイトの価格）に選んだプランの価格があればそれと、
+    なければ定価と比べる。
     budget_allowance を渡すと、予算 × budget_allowance 以内のプランの中からお得額が最大のものを選ぶ
     （1日プラン提案で、予算を大きく超えるプランを出さないため）。渡さなければ、すべてのプランから選ぶ（施設を検索タブ）。
     検索画面の施設一覧でも、1日プランと同じ金額を出すために使う。
     """
     item = PlanItem(slot=slot, kind="benefit", name=menu.name, category=menu.category, description=menu.description,
                     menu_id=menu.id)
-    plan = best_saving_plan(menu, price_limit(menu, budget, budget_categories, budget_allowance))
+    plan = best_saving_plan(menu, price_limit(menu, budget, budget_categories, budget_allowance), markets)
     if plan is None:
         return item
+    compare = compare_price(plan, (markets or {}).get(plan.id))
     item.plan_name = plan.name
     item.plan_price = plan.benefit_price
     item.plan_people = plan.adults or 1
     item.list_price = per_person(plan.list_price, plan)
-    item.price = per_person(plan.benefit_price, plan)
-    item.saving = item.list_price - item.price
+    item.price = compare.benefit_price
+    item.compared_price = compare.compared_price
+    item.compared_to = compare.compared_to
+    item.saving = compare.saving
+    item.saving_rate = compare.saving_rate
     # 予算（1人あたり）と、1人あたりの金額を比べる。既定は宿だけ（1日プランの「宿代の予算」）
     if budget and menu.category in budget_categories and item.price > budget:
         item.over_budget = item.price - budget
@@ -191,11 +244,13 @@ def benefit_item(slot: str, menu: Menu, budget: Optional[int], budget_categories
 
 def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
                    area_id: Optional[str] = None, budget: Optional[int] = None,
-                   budget_allowance: Optional[float] = None) -> Optional[DayPlan]:
+                   budget_allowance: Optional[float] = None,
+                   markets: Optional[MarketsByPlan] = None) -> Optional[DayPlan]:
     """1つのエリアのプランを組む。area_id を省略すると、検索結果のいちばん上のエリアで組む。
 
     宿代の予算を超える宿も選び、超える額を記録する（超えてもお得なことを、表示と説明文で伝えるため）。
     budget_allowance を渡すと、宿のプランは予算 × budget_allowance 以内のものから選ぶ。
+    markets（料金プランの id → 一般サイトの価格）にあるプランは、お得額を一般サイトの価格と比べる。ないプランは定価と比べる。
     予算は宿代の上限なので、食事・レジャーには当てはめない。
     DB も AI も使わない。
     """
@@ -210,10 +265,10 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
     used: set[str] = set()
     items: list[PlanItem] = []
     for slot, category in SLOTS:
-        menu = _pick_menu(area_menus, category, used, budget, budget_allowance)
+        menu = _pick_menu(area_menus, category, used, budget, budget_allowance, markets)
         if menu is not None:
             used.add(menu.id)
-            items.append(benefit_item(slot, menu, budget, budget_allowance=budget_allowance))
+            items.append(benefit_item(slot, menu, budget, budget_allowance=budget_allowance, markets=markets))
             continue
         if category == "stay":
             continue  # 周辺スポットには宿泊がないので、夜の枠は出さない（日帰り）
@@ -258,7 +313,11 @@ def explain_by_rule(plan: DayPlan) -> str:
         text += f"1人あたり合計で{plan.total_saving:,}円お得です。"
     for item in plan.items:
         if item.over_budget:
-            text += f"{item.slot}の{item.name}は宿代の予算を{item.over_budget:,}円超えますが、定価より{item.saving or 0:,}円お得です。"
+            text += f"{item.slot}の{item.name}は宿代の予算を{item.over_budget:,}円超えます"
+            if item.saving and item.saving > 0:
+                text += f"が、{item.compared_to}より{item.saving:,}円お得です。"
+            else:
+                text += "。"
     return text
 
 
@@ -270,8 +329,10 @@ def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
     lines = []
     for item in plan.items:
         line = f"- {item.slot}：{item.name}（{KIND_LABELS[item.kind]}）{item.description or ''}"
-        if item.saving:
-            line += f" 定価{item.list_price:,}円→福利厚生{item.price:,}円（{item.saving:,}円お得）"
+        if item.saving and item.saving > 0:
+            line += f" {item.compared_to}{item.compared_price:,}円→福利厚生{item.price:,}円（{item.saving:,}円お得）"
+        elif item.saving and item.saving < 0:
+            line += f" {item.compared_to}{item.compared_price:,}円・福利厚生{item.price:,}円（{item.compared_to}の方が{-item.saving:,}円安い）"
         if item.over_budget:
             line += f" ※宿代の予算を{item.over_budget:,}円超える"
         lines.append(line)
@@ -283,6 +344,9 @@ def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
         "金額はすべて1人あたり。お得額があれば、1人あたり合計でいくらお得かに触れること",
         "宿代の予算を超える宿があれば、超える額とお得額の両方を示し、お得感の大きさを伝えること。お得額が超える額より小さいときは、そう正直に書くこと",
     ]
+    if any(item.compared_to == COMPARED_TO_MARKET for item in plan.items):
+        rules.append("お得額は、一般サイトの価格がある施設はそれと、ない施設は定価と比べたもの。施設ごとに、どちらと比べたかを取り違えないこと。"
+                     "一般サイトの方が安い施設があれば、そう正直に書くこと")
     if plan.alternative:
         rules.append("このプランは利用者が挙げたエリア以外からの代替案なので、冒頭でそのことを断り、代わりに勧める理由を書くこと")
     rules.append("説明文だけを出力すること")
@@ -328,14 +392,46 @@ def _load_spots(tenant_id: str, area_id: str) -> list[Spot]:
     return spots
 
 
+def _read_plan_market_rows(plan_ids: list[str]) -> list[dict[str, Any]]:
+    """market_prices のうち、料金プランにひも付いた（plan_id が入った）代表値の行を読む。
+
+    TODO(pricing.py): 料金プランごとの一般サイトの価格を読む関数が pricing.py（じゅんぺいさん担当）にできたら、
+    この関数を消し、load_market_prices からそちらを呼ぶ。
+    """
+    if not plan_ids:
+        return []
+    query = table("market_prices").select("*").in_("plan_id", plan_ids).eq("is_representative", True)
+    return query.execute().data
+
+
+def load_market_prices(menus: list[Menu]) -> MarketsByPlan:
+    """料金プランごとの一般サイトの価格（料金プランの id → 価格）。宿泊施設の料金プランだけ。
+
+    料金プランにひも付いた価格（plan_id が入った行）だけを使う。宿ごとの価格（plan_id が空の行）は、
+    どのプランの価格か分からないので使わない（1つの価格をすべてのプランと比べると、素泊まりばかり選ばれるため）。
+    ひも付いた価格がないプランや、読めなかったとき（plan_id の列がまだないときを含む）は、そのプランを定価と比べる。
+    """
+    plan_ids = [plan.id for menu in menus if menu.category == "stay" for plan in menu.plans]
+    try:
+        rows = _read_plan_market_rows(plan_ids)
+    except Exception:  # 一般サイトの価格が読めなくても、定価と比べて組む
+        return {}
+    markets: MarketsByPlan = {}
+    for row in rows:
+        markets[row["plan_id"]] = MarketPrice.from_row(row)
+    return markets
+
+
 def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget: Optional[int] = None,
-                   requested_area_names: Iterable[str] = ()) -> list[DayPlan]:
+                   requested_area_names: Iterable[str] = (),
+                   markets: Optional[MarketsByPlan] = None) -> list[DayPlan]:
     """画面から呼ぶ入口。エリアごとにプランを組み、説明文を付けて返す。組めなければ空のリスト。
 
     menus は検索結果の順位順に並んでいる前提（順位は ranking.py が決める）。
     requested_area_names（利用者が挙げたエリア名）があれば、そのエリアのプランを先に並べ、
     それ以外のエリアのプランは代替案として後ろに並べる。合わせて最大 MAX_PLANS 個。
     宿のプランは、宿代の予算 × BUDGET_ALLOWANCE 以内のものから選ぶ。
+    markets（load_market_prices の結果）を渡すと、一般サイトの価格が取れたプランは、お得額をそれと比べる。
     """
     # ① 検索結果に出てくるエリアを、上から順に全部取り出す
     area_ids = plan_area_ids(menus, limit=len(menus))
@@ -362,7 +458,8 @@ def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget:
         except Exception:  # 周辺スポットが読めなくても、福利厚生の施設だけで組む
             spots = []
         area_name = area_names.get(area_id, "")
-        plan = build_day_plan(menus, spots, area_name, area_id=area_id, budget=budget, budget_allowance=BUDGET_ALLOWANCE)
+        plan = build_day_plan(menus, spots, area_name, area_id=area_id, budget=budget, budget_allowance=BUDGET_ALLOWANCE,
+                              markets=markets)
         if plan is None:
             continue
         plan.alternative = bool(requested) and area_name not in requested
