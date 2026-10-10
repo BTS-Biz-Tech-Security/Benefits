@@ -2,7 +2,7 @@
 
 - プランはエリアごとに1つ。検索結果に出てくるエリアを上から順に、最大 MAX_PLANS 個まで組む
 - 各枠には、同じエリア・同じカテゴリの施設のうち、お得額が最大のものを入れる。
-  お得額は料金プランごとに、一般サイトの価格が取れたプランはそれ、取れなかったプランは定価と、福利厚生価格との差（compare_price）
+  お得額は料金プランごとに、一般サイトの価格が取れたプランはそれ、取れなかったプランは定価と、福利厚生価格との差（plan_saving）
 - 足りない枠は周辺スポットで補い、それもなければ「自由時間」にする
 - 説明文は、AI のキーがあれば AI、なければ決まった文の型で作る
 
@@ -104,9 +104,9 @@ class PriceCompare:
     saving_rate: int  # お得額の割合（%、四捨五入）。比べる価格が0なら0
 
 
-# TODO(pricing.py): pricing.compare_price（じゅんぺいさん担当）ができたら、この関数と PriceCompare を消し、
-# 「from pricing import compare_price」に置き換える。引数と戻り値は compare_price と同じにしてある
-def compare_price(plan: Plan, market: Optional[MarketPrice]) -> PriceCompare:
+# TODO(pricing.py): pricing.plan_saving（じゅんぺいさん担当）ができたら、この関数と PriceCompare を消し、
+# 「from pricing import plan_saving」に置き換える。引数と戻り値は plan_saving と同じにしてある
+def plan_saving(plan: Plan, market: Optional[MarketPrice]) -> PriceCompare:
     """料金プランの福利厚生価格を、一般サイトの価格（なければ定価）と比べる。金額は1人あたり。
 
     一般サイトの価格は、プランの人数・泊数にそろえてから（pricing.normalize）1人あたりにする。
@@ -127,8 +127,8 @@ def compare_price(plan: Plan, market: Optional[MarketPrice]) -> PriceCompare:
 
 
 def saving_per_person(plan: Plan, market: Optional[MarketPrice] = None) -> int:
-    """料金プランの1人あたりのお得額（compare_price のお得額）。"""
-    return compare_price(plan, market).saving
+    """料金プランの1人あたりのお得額（plan_saving のお得額）。"""
+    return plan_saving(plan, market).saving
 
 
 def best_saving_plan(menu: Menu, max_price: Optional[float] = None,
@@ -215,7 +215,7 @@ def benefit_item(slot: str, menu: Menu, budget: Optional[int], budget_categories
                  budget_allowance: Optional[float] = None, markets: Optional[MarketsByPlan] = None) -> PlanItem:
     """福利厚生の施設を、プランの1枠にする。金額はお得額が最大の料金プランのもので、1人あたりにする。
 
-    お得額は compare_price で計算する。markets（料金プランの id → 一般サイトの価格）に選んだプランの価格があればそれと、
+    お得額は plan_saving で計算する。markets（料金プランの id → 一般サイトの価格）に選んだプランの価格があればそれと、
     なければ定価と比べる。
     budget_allowance を渡すと、予算 × budget_allowance 以内のプランの中からお得額が最大のものを選ぶ
     （1日プラン提案で、予算を大きく超えるプランを出さないため）。渡さなければ、すべてのプランから選ぶ（施設を検索タブ）。
@@ -226,7 +226,7 @@ def benefit_item(slot: str, menu: Menu, budget: Optional[int], budget_categories
     plan = best_saving_plan(menu, price_limit(menu, budget, budget_categories, budget_allowance), markets)
     if plan is None:
         return item
-    compare = compare_price(plan, (markets or {}).get(plan.id))
+    compare = plan_saving(plan, (markets or {}).get(plan.id))
     item.plan_name = plan.name
     item.plan_price = plan.benefit_price
     item.plan_people = plan.adults or 1

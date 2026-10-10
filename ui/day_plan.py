@@ -18,7 +18,7 @@ def price_text(price: Optional[int], compared_price: Optional[int] = None, savin
                plan_price: Optional[int] = None, plan_people: Optional[int] = None) -> str:
     """「定価 15,000円 → 10,500円　4,500円お得（30%）（2名で21,000円）」の形。お得額がなければ福利厚生価格だけ。
 
-    お得額と割合は計算せず、compare_price（day_plan.py）で計算済みの値を受け取って出すだけ。
+    お得額と割合は計算せず、plan_saving（day_plan.py）で計算済みの値を受け取って出すだけ。
     compared_to が「一般サイト」なら「一般サイト 〇〇円 →」と出し、一般サイトの方が安ければそう添える。
     金額は1人あたり。料金プランが2名分などのときは、料金プランに書かれた金額を（2名で〇〇円）と添える。
     1日プランと、検索画面の施設一覧・詳細画面で使う（同じ見た目にそろえるため）。

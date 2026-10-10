@@ -365,8 +365,8 @@ def test_benefit_item_with_allowance_shows_plan_within_limit():
     assert day_plan.benefit_item("夜", m, 10000).plan_name == "デラックス"
 
 
-# --- compare_price（pricing.compare_price ができるまでの仮の関数）と、一般サイトの価格との比較 ---
-# compare_price の3つのテストは、tests/test_pricing.py に入る予定のもの（じゅんぺいさん作成）と同じ値にしてある
+# --- plan_saving（pricing.plan_saving ができるまでの仮の関数）と、一般サイトの価格との比較 ---
+# plan_saving の3つのテストは、tests/test_pricing.py に入る予定のもの（じゅんぺいさん作成）と同じ値にしてある
 
 
 def plan_for_two(**kw) -> Plan:
@@ -382,20 +382,20 @@ def market_price(**kw) -> MarketPrice:
     return MarketPrice(**base)
 
 
-def test_compare_price_uses_market_price():
-    c = day_plan.compare_price(plan_for_two(), market_price())  # 一般サイト 26,000円・福利厚生 18,000円（2名分）
+def test_plan_saving_uses_market_price():
+    c = day_plan.plan_saving(plan_for_two(), market_price())  # 一般サイト 26,000円・福利厚生 18,000円（2名分）
     assert (c.benefit_price, c.compared_price, c.compared_to) == (9000, 13000, "一般サイト")
     assert c.saving == 4000 and c.saving_rate == 31
 
 
-def test_compare_price_falls_back_to_list_price():
-    c = day_plan.compare_price(plan_for_two(), None)  # 定価 30,000円・福利厚生 18,000円（2名分）
+def test_plan_saving_falls_back_to_list_price():
+    c = day_plan.plan_saving(plan_for_two(), None)  # 定価 30,000円・福利厚生 18,000円（2名分）
     assert (c.benefit_price, c.compared_price, c.compared_to) == (9000, 15000, "定価")
     assert c.saving == 6000 and c.saving_rate == 40
 
 
-def test_compare_price_aligns_market_to_plan_people():
-    c = day_plan.compare_price(plan_for_two(), market_price(adults=1, price=13000))  # 1名分の価格 → 2名分にそろえてから1人あたり
+def test_plan_saving_aligns_market_to_plan_people():
+    c = day_plan.plan_saving(plan_for_two(), market_price(adults=1, price=13000))  # 1名分の価格 → 2名分にそろえてから1人あたり
     assert c.compared_price == 13000 and c.compared_to == "一般サイト"
 
 
