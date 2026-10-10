@@ -9,7 +9,7 @@ Step2-2 Webアプリ
 - 接続情報は `.streamlit/secrets.toml` に書く（各自のPCにだけ作る。GitHub には上げない）
 - サイドバーの「開発用: 利用者を選ぶ」で見本の利用者を選ぶと、ログインした状態で画面を確かめられる（人事の画面は山本さんを選ぶ）。パスワードを確かめない開発用の仕組みなので、本番運用では app.py から外す
 - AIを使う機能（文章からの条件読み取り・意味の近さで探す・1日プランの説明）は、secrets.toml の `[llm]` に `api_key` があるときだけ動く。なければ簡易なルールと完全一致で動く
-- 市場価格（楽天トラベルの価格）は market_prices に入れる。検索のたびに、取得してから6時間以上たった宿を最大5件まで楽天から取り直し、DBの値と違えば上書きする（prices/refresh.py）。secrets.toml の `[rakuten]` に `application_id` と `access_key`（許可Webサイトを登録した場合は `referer` も）がなければ取り直さず、DBの値をそのまま使う。楽天のキーはチャットに貼らない
+- 市場価格（楽天トラベルの価格）は market_prices に料金プランごとに入れる（人数・泊数・食事の条件をプランに合わせる。sql/009）。検索のたびに、取得してから6時間以上たったプランを最大5件まで楽天から取り直し、DBの値と違えば上書きする（prices/refresh.py）。secrets.toml の `[rakuten]` に `application_id` と `access_key`（許可Webサイトを登録した場合は `referer` も）がなければ取り直さず、DBの値をそのまま使う。楽天のキーはチャットに貼らない
 - まとめて入れるときは `python -m prices.update`（`--dry-run` を付けると表示だけ）。楽天のキーがなければ仮の価格（source が dummy）を入れる
 - 意味の近さで探すには、`sql/004_search.sql` を実行し、`python -m seed.embed_menus` で施設のベクトルを入れておく
 
