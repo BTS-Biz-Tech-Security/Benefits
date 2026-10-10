@@ -497,3 +497,23 @@ def test_load_market_prices_is_empty_when_reading_fails(monkeypatch):
 
     monkeypatch.setattr(day_plan, "_read_plan_market_rows", broken)
     assert day_plan.load_market_prices([menu("s1", "stay", price=10000)]) == {}
+
+
+def test_day_trip_request_skips_lodging(monkeypatch):
+    # 利用者が日帰りと書いたら、宿があっても夜の枠は出さない
+    monkeypatch.setattr(day_plan, "_load_spots", lambda tenant_id, area_id: [])
+    monkeypatch.setattr(day_plan, "list_areas", lambda tenant_id: AREAS)
+    monkeypatch.setattr(day_plan, "llm_api_key", lambda: None)
+    menus = [menu("s1", "stay", price=30000), menu("l1", "leisure", price=3000), menu("m1", "meal", price=2000)]
+    plan = build_day_plan(menus, [], "箱根", day_trip=True)
+    assert "夜" not in [i.slot for i in plan.items]
+    assert plan.day_trip is True
+    plans = day_plan.make_day_plans("t", menus, "日帰りで箱根", day_trip=True)
+    assert plans and all("夜" not in [i.slot for i in p.items] for p in plans)
+    assert "泊まる" not in plans[0].explanation
+
+
+def test_format_conditions_for_day_trip():
+    from ui.search_page import format_conditions
+    conditions = {"stay_date": date(2027, 1, 3), "people": 4, "budget": None, "day_trip": True}
+    assert format_conditions(conditions) == "利用日：2027/01/03（日） ・ 人数：4人 ・ 宿泊：なし（日帰り）"

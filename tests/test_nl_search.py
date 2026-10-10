@@ -68,3 +68,38 @@ def test_rules_do_not_mistake_people_count_for_per_person():
     # 「子ども1人」は人数の話で、「1人あたり」ではない
     parsed = parse_with_rules("大人2人と子ども1人の3人で1泊、予算は3万円")
     assert parsed["conditions"]["budget_per_person"] is False
+
+
+def test_day_trip_is_read_and_drops_lodging_budget():
+    # 日帰りなら宿代はかからないので、予算を読み取っていても「指定なし」にする
+    conditions = normalize_conditions({"people": 4, "budget_amount": 3000, "budget_per_person": True,
+                                       "budget_per_night": True, "day_trip": True}, TODAY)
+    assert conditions["day_trip"] is True
+    assert conditions["budget"] is None
+
+
+def test_day_trip_is_false_unless_true():
+    assert normalize_conditions({"people": 2}, TODAY)["day_trip"] is False
+    assert normalize_conditions({"people": 2, "day_trip": "true"}, TODAY)["day_trip"] is False  # 文字列は使わない
+
+
+def test_date_is_written():
+    from nl_search import date_is_written
+    assert date_is_written("1月3日に日帰りで箱根", datetime.date(2027, 1, 3))
+    assert date_is_written("１２／２６に熱海", datetime.date(2026, 12, 26))  # 全角
+    assert date_is_written("12 月 26 日", datetime.date(2026, 12, 26))
+    # 月だけの書き方から、AI が日付を作っても使わない
+    assert not date_is_written("12月に箱根の温泉旅館", datetime.date(2026, 12, 1))
+    assert not date_is_written("12月26日から1泊", datetime.date(2026, 12, 6))
+    assert not date_is_written("予算は1/2くらい", datetime.date(2026, 1, 20))
+
+
+def test_parse_plan_drops_date_not_in_text(monkeypatch):
+    import nl_search
+    monkeypatch.setattr(nl_search, "llm_api_key", lambda: "key")
+    monkeypatch.setattr(nl_search, "_parse_with_ai", lambda text, focus, key: {
+        "summary": "", "keywords": [], "conditions": {"stay_date": "12-01", "people": 2}})
+    assert nl_search.parse_plan("12月に2人で箱根", today=TODAY)["conditions"]["stay_date"] is None
+    monkeypatch.setattr(nl_search, "_parse_with_ai", lambda text, focus, key: {
+        "summary": "", "keywords": [], "conditions": {"stay_date": "01-03", "people": 4, "day_trip": True}})
+    assert nl_search.parse_plan("1月3日に4人で日帰り", today=TODAY)["conditions"]["stay_date"] == datetime.date(2027, 1, 3)

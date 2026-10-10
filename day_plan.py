@@ -245,13 +245,14 @@ def benefit_item(slot: str, menu: Menu, budget: Optional[int], budget_categories
 def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
                    area_id: Optional[str] = None, budget: Optional[int] = None,
                    budget_allowance: Optional[float] = None,
-                   markets: Optional[MarketsByPlan] = None) -> Optional[DayPlan]:
+                   markets: Optional[MarketsByPlan] = None, day_trip: bool = False) -> Optional[DayPlan]:
     """1つのエリアのプランを組む。area_id を省略すると、検索結果のいちばん上のエリアで組む。
 
     宿代の予算を超える宿も選び、超える額を記録する（超えてもお得なことを、表示と説明文で伝えるため）。
     budget_allowance を渡すと、宿のプランは予算 × budget_allowance 以内のものから選ぶ。
     markets（料金プランの id → 一般サイトの価格）にあるプランは、お得額を一般サイトの価格と比べる。ないプランは定価と比べる。
     予算は宿代の上限なので、食事・レジャーには当てはめない。
+    day_trip（利用者が日帰りと書いたとき）が True なら、宿があっても夜の枠は出さない。
     DB も AI も使わない。
     """
     # ① エリアを決め、そのエリアの施設だけにする
@@ -265,6 +266,8 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
     used: set[str] = set()
     items: list[PlanItem] = []
     for slot, category in SLOTS:
+        if day_trip and category == "stay":
+            continue  # 日帰りを希望しているので、宿は選ばない
         menu = _pick_menu(area_menus, category, used, budget, budget_allowance, markets)
         if menu is not None:
             used.add(menu.id)
@@ -424,7 +427,7 @@ def load_market_prices(menus: list[Menu]) -> MarketsByPlan:
 
 def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget: Optional[int] = None,
                    requested_area_names: Iterable[str] = (),
-                   markets: Optional[MarketsByPlan] = None) -> list[DayPlan]:
+                   markets: Optional[MarketsByPlan] = None, day_trip: bool = False) -> list[DayPlan]:
     """画面から呼ぶ入口。エリアごとにプランを組み、説明文を付けて返す。組めなければ空のリスト。
 
     menus は検索結果の順位順に並んでいる前提（順位は ranking.py が決める）。
@@ -432,6 +435,7 @@ def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget:
     それ以外のエリアのプランは代替案として後ろに並べる。合わせて最大 MAX_PLANS 個。
     宿のプランは、宿代の予算 × BUDGET_ALLOWANCE 以内のものから選ぶ。
     markets（load_market_prices の結果）を渡すと、一般サイトの価格が取れたプランは、お得額をそれと比べる。
+    day_trip（利用者が日帰りと書いたとき）が True なら、どのエリアでも夜の枠（宿）は出さない。
     """
     # ① 検索結果に出てくるエリアを、上から順に全部取り出す
     area_ids = plan_area_ids(menus, limit=len(menus))
@@ -459,7 +463,7 @@ def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget:
             spots = []
         area_name = area_names.get(area_id, "")
         plan = build_day_plan(menus, spots, area_name, area_id=area_id, budget=budget, budget_allowance=BUDGET_ALLOWANCE,
-                              markets=markets)
+                              markets=markets, day_trip=day_trip)
         if plan is None:
             continue
         plan.alternative = bool(requested) and area_name not in requested
