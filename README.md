@@ -51,7 +51,7 @@ table("menus").select("name").ilike("name", "%水族館%").execute().data
 | `.is_("列", "null")` | 空（削除されていない行は `.is_("deleted_at", "null")`） |
 | `.order("列")` / `.limit(件数)` | 並び替え / 件数 |
 
-- 主なテーブル: menus（施設）、plans（プラン）、areas（エリア）、users（利用者）、posts（口コミ）、market_prices（一般サイトの価格）、spots（周辺情報）。列名は `sql/001_schema.sql` か、チームLPのER図で確かめる
+- 主なテーブル: menus（施設）、plans（プラン）、areas（エリア）、users（利用者）、posts（口コミ）、market_prices（市場価格）、spots（周辺情報）。列名は `sql/001_schema.sql` か、チームLPのER図で確かめる
 - データの中身を表で見たいときは Supabase の Table Editor、SQLで試したいときは SQL Editor も使える
 - 試すときは取り出し（select）だけにする。insert・update・delete は共有の見本データを書き換えるため
 
