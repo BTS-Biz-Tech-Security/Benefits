@@ -86,7 +86,7 @@ def _render_menu_list(menus: list[Menu], key_prefix: str, budget: Optional[int] 
             if menu.description:
                 col_info.caption(menu.description)
             col_button.button("詳細を見る", key=f"{key_prefix}-{menu.id}", icon=":material/arrow_forward:",
-                              on_click=open_detail, args=(menu.id,))
+                              on_click=open_detail, args=(menu.id, item.plan_id))
 
 
 def _render_plans_and_list(menus: list[Menu], plans: list[DayPlan], budget: Optional[int],

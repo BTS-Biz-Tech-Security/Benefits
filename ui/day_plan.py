@@ -79,7 +79,7 @@ def render_day_plan(plan: DayPlan) -> None:
                 # 福利厚生の施設は、「詳細を見る」ボタンで詳細画面に移れる
                 if item.menu_id:
                     col_button.button("詳細を見る", key=f"day-plan-{plan.area_id}-{item.slot}-{item.menu_id}",
-                                      icon=":material/arrow_forward:", on_click=open_detail, args=(item.menu_id,))
+                                      icon=":material/arrow_forward:", on_click=open_detail, args=(item.menu_id, item.plan_id))
             elif item.kind == "spot":
                 col_name.markdown(name)
                 col_price.markdown(f":gray[{KIND_LABELS[item.kind]}]")

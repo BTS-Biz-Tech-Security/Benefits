@@ -54,6 +54,7 @@ class PlanItem:
     # ここから下は福利厚生の施設だけに入る（お得額が最大の料金プランの値）。周辺スポットと自由時間は None
     # 金額はすべて1人あたり（料金プランの金額を、その料金の人数で割ったもの）
     menu_id: Optional[str] = None  # 施設の id。施設名から詳細画面へ移るときに使う
+    plan_id: Optional[str] = None  # 提案した料金プランの id。詳細画面で、その料金プランに印を付けるときに使う
     plan_name: Optional[str] = None
     plan_price: Optional[int] = None  # 料金プランに書かれている福利厚生価格そのもの（例: 2名1室の料金）
     plan_people: Optional[int] = None  # その料金が何人分か
@@ -242,6 +243,7 @@ def benefit_item(slot: str, menu: Menu, budget: Optional[int], budget_categories
     if plan is None:
         return item
     compare = plan_saving(plan, (markets or {}).get(plan.id))
+    item.plan_id = plan.id
     item.plan_name = plan.name
     item.plan_price = plan.benefit_price
     item.plan_people = plan.adults or 1
