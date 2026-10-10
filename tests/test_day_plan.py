@@ -419,6 +419,13 @@ def test_build_day_plan_uses_market_price_only_for_that_plan():
     assert plan.total_saving == 4600
 
 
+def test_pick_menu_puts_menu_without_plans_last():
+    # 料金プランのない施設は、市場価格の方が安い施設（お得額がマイナス）よりも後ろ。検索結果で上にあっても選ばない
+    no_plan = menu("n1", "stay")
+    stay = Menu(id="m1", tenant_id="t", name="宿", category="stay", area_id=HAKONE, plans=[plan_for_two()])
+    markets = {"p1": market_price(price=16000)}  # 市場価格 1人8,000円・福利厚生 1人9,000円 → 1,000円のマイナス
+    assert day_plan._pick_menu([no_plan, stay], "stay", set(), markets=markets) is stay
+
 
 def test_total_saving_skips_facilities_cheaper_on_market():
     # 市場価格の方が安い宿（お得額がマイナス）は、合計のお得額に入れない
