@@ -9,7 +9,7 @@ from models import Menu, Plan, User
 
 
 def render_coupon_card(user: User, menu: Menu, plan: Plan) -> None:
-    """価格比較タブの各プランの下に出す。"""
+    """詳細画面のプラン・条件タブで、各料金プランの下に出す。"""
     with st.container(border=True):
         # ① 左に説明、右にコピーできるコード
         k1, k2 = st.columns([1, 1], vertical_alignment="center")
