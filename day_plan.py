@@ -75,6 +75,7 @@ class DayPlan:
     explanation: str = ""
     budget: Optional[int] = None  # 宿代の予算（1泊・1人あたり）。宿泊施設にだけ当てはめる
     alternative: bool = False  # 利用者が挙げたエリア以外の代替案のとき True
+    day_trip_requested: bool = False  # 利用者が日帰りと書いたとき True（宿を探していない）。False で day_trip なら、宿が見つからなかった
 
     @property
     def total_saving(self) -> int:
@@ -286,9 +287,9 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
     # ③ 福利厚生価格を合計する（周辺スポットは価格がないので入れない）
     prices = [item.price for item in items if item.price is not None]
     total_price = sum(prices) if prices else None
-    day_trip = not any(item.slot == NIGHT for item in items)
-    return DayPlan(area_id=area_id, area_name=area_name, items=items, day_trip=day_trip,
-                   total_price=total_price, budget=budget)
+    has_night = any(item.slot == NIGHT for item in items)
+    return DayPlan(area_id=area_id, area_name=area_name, items=items, day_trip=not has_night,
+                   total_price=total_price, budget=budget, day_trip_requested=day_trip)
 
 
 def explain_by_rule(plan: DayPlan) -> str:

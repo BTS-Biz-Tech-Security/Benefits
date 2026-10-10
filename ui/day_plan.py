@@ -9,7 +9,7 @@ from typing import Optional
 
 import streamlit as st
 
-from day_plan import COMPARED_TO_LIST, COMPARED_TO_MARKET, KIND_LABELS, DayPlan, PlanItem
+from day_plan import COMPARED_TO_LIST, COMPARED_TO_MARKET, KIND_LABELS, NIGHT, DayPlan, PlanItem
 from ui.detail_page import open_detail
 
 
@@ -46,6 +46,13 @@ def item_price_text(item: PlanItem) -> str:
                       item.over_budget, item.plan_price, item.plan_people)
 
 
+def day_trip_reason(plan: DayPlan) -> str:
+    """日帰りのプランで、夜の行に添える理由。利用者が日帰りと書いたか、宿が見つからなかったか。"""
+    if plan.day_trip_requested:
+        return "ご希望どおり宿泊なし"
+    return "宿泊の施設が見つかりませんでした"
+
+
 def render_day_plan(plan: DayPlan) -> None:
     """1つのプランを枠で囲んで表示する。検索画面から呼ばれる。"""
     with st.container(border=True):
@@ -78,10 +85,14 @@ def render_day_plan(plan: DayPlan) -> None:
                 col_price.markdown(f":gray[{KIND_LABELS[item.kind]}]")
             else:
                 col_name.markdown(name)  # 自由時間
-
-        # ③ 補足（日帰り・価格の合計）と説明文
+        # 日帰りなら、夜の行も同じ4列の形で「日帰り（宿泊なし）」と出す
         if plan.day_trip:
-            st.caption("宿泊の施設が見つからなかったため、日帰りのプランです。")
+            col_slot, col_name, col_price, _ = st.columns([1, 4, 5, 2], vertical_alignment="center")
+            col_slot.markdown(NIGHT)
+            col_name.markdown("日帰り（宿泊なし）")
+            col_price.markdown(f":gray[{day_trip_reason(plan)}]")
+
+        # ③ 補足（価格の合計）と説明文
         if plan.total_price is not None:
             st.caption(f"福利厚生価格の合計：{plan.total_price:,}円（1人あたり）")
         if plan.explanation:

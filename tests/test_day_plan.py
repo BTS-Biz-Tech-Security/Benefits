@@ -517,3 +517,14 @@ def test_format_conditions_for_day_trip():
     from ui.search_page import format_conditions
     conditions = {"stay_date": date(2027, 1, 3), "people": 4, "budget": None, "day_trip": True}
     assert format_conditions(conditions) == "利用日：2027/01/03（日） ・ 人数：4人 ・ 宿泊：なし（日帰り）"
+
+
+def test_day_trip_reason_tells_requested_from_not_found():
+    from ui.day_plan import day_trip_reason
+    menus = [menu("l1", "leisure", price=3000), menu("m1", "meal", price=2000)]
+    requested = build_day_plan(menus + [menu("s1", "stay", price=30000)], [], "箱根", day_trip=True)
+    not_found = build_day_plan(menus, [], "箱根")  # 宿がないので、結果として日帰り
+    assert (requested.day_trip, requested.day_trip_requested) == (True, True)
+    assert (not_found.day_trip, not_found.day_trip_requested) == (True, False)
+    assert day_trip_reason(requested) == "ご希望どおり宿泊なし"
+    assert day_trip_reason(not_found) == "宿泊の施設が見つかりませんでした"
