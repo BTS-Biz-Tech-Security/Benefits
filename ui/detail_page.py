@@ -62,7 +62,7 @@ def render() -> None:
         [":material/payments: 価格比較", ":material/bed: プラン・条件", ":material/reviews: 口コミ", ":material/map: 周辺"])
     with tab_price:
         # TODO(ui/price_tab.py): じゅんぺいさん担当。render_price_tab(user, menu) ができたら、この1行をその呼び出しに置き換える
-        st.info("一般サイトとの価格比較は準備中です。")
+        st.info("市場価格との比較は準備中です。")
     with tab_plans:
         _render_plans_and_conditions(menu)
     with tab_reviews:
@@ -77,7 +77,7 @@ def _render_plans_and_conditions(menu: Menu) -> None:
     st.markdown("**料金プラン**")
     if not menu.plans:
         st.caption("料金プランは登録されていません。")
-    markets = load_market_prices([menu])  # 料金プランの id → 一般サイトの価格（取れたプランだけ）
+    markets = load_market_prices([menu])  # 料金プランの id → 市場価格（取れたプランだけ）
     for plan in menu.plans:
         with st.container(border=True):
             st.markdown(f"**{plan.name}**")
@@ -87,7 +87,7 @@ def _render_plans_and_conditions(menu: Menu) -> None:
             # ui.day_plan は ui.detail_page を読み込んでいるので、ここで読み込む（ファイルの先頭で読むと循環してしまう）
             from ui.day_plan import price_text
             # お得額は1日プラン・施設一覧と同じく plan_saving で計算する
-            # 一般サイトの価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
+            # 市場価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
             compare = plan_saving(plan, markets.get(plan.id))
             st.markdown(price_text(compare.benefit_price, compare.compared_price, compare.saving, compare.saving_rate,
                                    compare.compared_to, plan_price=plan.benefit_price, plan_people=plan.adults or 1))

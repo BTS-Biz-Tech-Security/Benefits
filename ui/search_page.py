@@ -61,7 +61,7 @@ def _render_menu_list(menus: list[Menu], key_prefix: str, budget: Optional[int] 
     budget（1人あたり）を渡すと、budget_categories のカテゴリの施設で予算を超えるものに「予算＋〇〇円」のバッジを付ける。
     既定は宿だけ（1日プラン提案の「宿代の予算」）。施設を検索タブでは、選んだカテゴリ（「すべて」なら全カテゴリ）を渡す。
     budget_allowance を渡すと、予算 × budget_allowance 以内のプランの金額を出す（1日プラン提案タブ。1日プランと同じ金額にするため）。
-    markets（料金プランの id → 一般サイトの価格）を渡すと、価格が取れたプランのお得額は一般サイトの価格と比べる（両方のタブ）。
+    markets（料金プランの id → 市場価格）を渡すと、価格が取れたプランのお得額は市場価格と比べる（両方のタブ）。
 
     TODO(results_page.py): この一覧は仮のもの。一覧の表示と並び替えは ui/results_page.py（じゅんぺいさん担当）の役割なので、
     results_page.py ができたら、この関数の中身をその表示（render_results）の呼び出しに置き換える。
@@ -128,7 +128,7 @@ def _text_tab(tenant_id: str) -> None:
                     # 宿は予算の1.5倍（BUDGET_ALLOWANCE）まで残し、超える額はバッジで示す。「施設を検索」タブは予算ちょうどまで
                     menus = search_menus(tenant_id, people=conditions["people"], budget=conditions["budget"], keywords=words,
                                          budget_allowance=BUDGET_ALLOWANCE)
-                    # お得額は、一般サイトの価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
+                    # お得額は、市場価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
                     markets = load_market_prices(menus)
                     plans = make_day_plans(tenant_id, menus, plan_text, budget=conditions["budget"], requested_area_names=words,
                                            markets=markets)
@@ -177,7 +177,7 @@ def _condition_tab(tenant_id: str) -> None:
                 # ② 検索する（このタブでは1日プランは組まない）
                 menus = search_menus(tenant_id, area_code=area_code, category=category_key,
                                      people=int(people), budget=budget_value, budget_categories=budget_categories)
-                # お得額は1日プランと同じく、一般サイトの価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
+                # お得額は1日プランと同じく、市場価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
                 markets = load_market_prices(menus)
                 # ③ 画面が再実行されても結果が消えないよう保存しておく
                 st.session_state["search_condition_result"] = {"menus": menus, "budget": budget_value,

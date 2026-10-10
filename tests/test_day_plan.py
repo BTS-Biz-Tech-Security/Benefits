@@ -365,7 +365,7 @@ def test_benefit_item_with_allowance_shows_plan_within_limit():
     assert day_plan.benefit_item("夜", m, 10000).plan_name == "デラックス"
 
 
-# --- plan_saving（pricing.plan_saving ができるまでの仮の関数）と、一般サイトの価格との比較 ---
+# --- plan_saving（pricing.plan_saving ができるまでの仮の関数）と、市場価格との比較 ---
 # plan_saving の3つのテストは、tests/test_pricing.py に入る予定のもの（じゅんぺいさん作成）と同じ値にしてある
 
 
@@ -383,8 +383,8 @@ def market_price(**kw) -> MarketPrice:
 
 
 def test_plan_saving_uses_market_price():
-    c = day_plan.plan_saving(plan_for_two(), market_price())  # 一般サイト 26,000円・福利厚生 18,000円（2名分）
-    assert (c.benefit_price, c.compared_price, c.compared_to) == (9000, 13000, "一般サイト")
+    c = day_plan.plan_saving(plan_for_two(), market_price())  # 市場価格 26,000円・福利厚生 18,000円（2名分）
+    assert (c.benefit_price, c.compared_price, c.compared_to) == (9000, 13000, "市場価格")
     assert c.saving == 4000 and c.saving_rate == 31
 
 
@@ -396,34 +396,35 @@ def test_plan_saving_falls_back_to_list_price():
 
 def test_plan_saving_aligns_market_to_plan_people():
     c = day_plan.plan_saving(plan_for_two(), market_price(adults=1, price=13000))  # 1名分の価格 → 2名分にそろえてから1人あたり
-    assert c.compared_price == 13000 and c.compared_to == "一般サイト"
+    assert c.compared_price == 13000 and c.compared_to == "市場価格"
 
 
 def test_benefit_item_compares_with_market_price():
     stay = Menu(id="m1", tenant_id="t", name="宿", category="stay", plans=[plan_for_two()])
     item = day_plan.benefit_item("夜", stay, None, markets={"p1": market_price()})
-    assert (item.compared_to, item.compared_price, item.price, item.saving, item.saving_rate) == ("一般サイト", 13000, 9000, 4000, 31)
-    # 一般サイトの価格を渡さなければ、これまでどおり定価と比べる
+    assert (item.compared_to, item.compared_price, item.price, item.saving, item.saving_rate) == ("市場価格", 13000, 9000, 4000, 31)
+    # 市場価格を渡さなければ、これまでどおり定価と比べる
     item = day_plan.benefit_item("夜", stay, None)
     assert (item.compared_to, item.compared_price, item.saving) == ("定価", 15000, 6000)
 
 
 def test_build_day_plan_uses_market_price_only_for_that_plan():
-    # 一般サイトの価格が取れた宿のプランは一般サイトと、取れなかった食事は定価と比べる。2種類が1つのプランに混ざる
+    # 市場価格が取れた宿のプランは市場価格と、取れなかった食事は定価と比べる。2種類が1つのプランに混ざる
     stay = Menu(id="m1", tenant_id="t", name="宿", category="stay", area_id=HAKONE, plans=[plan_for_two()])
     meal = menu("m2", "meal", price=2400, list_price=3000)
     plan = build_day_plan([stay, meal], [], "箱根", markets={"p1": market_price()})
     items = {i.slot: i for i in plan.items}
-    assert (items["夜"].compared_to, items["夜"].saving) == ("一般サイト", 4000)
+    assert (items["夜"].compared_to, items["夜"].saving) == ("市場価格", 4000)
     assert (items["昼"].compared_to, items["昼"].saving) == ("定価", 600)
     assert plan.total_saving == 4600
 
 
+
 def test_total_saving_skips_facilities_cheaper_on_market():
-    # 一般サイトの方が安い宿（お得額がマイナス）は、合計のお得額に入れない
+    # 市場価格の方が安い宿（お得額がマイナス）は、合計のお得額に入れない
     stay = Menu(id="m1", tenant_id="t", name="宿", category="stay", area_id=HAKONE, plans=[plan_for_two()])
     meal = menu("m2", "meal", price=2400, list_price=3000)
-    plan = build_day_plan([stay, meal], [], "箱根", markets={"p1": market_price(price=16000)})  # 一般サイト 1人8,000円
+    plan = build_day_plan([stay, meal], [], "箱根", markets={"p1": market_price(price=16000)})  # 市場価格 1人8,000円
     night = [i for i in plan.items if i.slot == "夜"][0]
     assert night.saving == -1000
     assert plan.total_saving == 600
@@ -436,10 +437,10 @@ def test_price_text_with_list_price_is_unchanged():
 
 
 def test_price_text_with_market_price():
-    assert price_text(9000, 13000, 4000, 31, "一般サイト") == (
-        ":gray[~~一般サイト 13,000円~~ →] **9,000円**　:green[**4,000円お得**（31%）]")
-    # 一般サイトの方が安いときは、お得とは出さず、そう添える
-    assert price_text(9000, 8000, -1000, -12, "一般サイト") == "福利厚生 9,000円　:gray[一般サイトの方が1,000円安い]"
+    assert price_text(9000, 13000, 4000, 31, "市場価格") == (
+        ":gray[~~市場価格 13,000円~~ →] **9,000円**　:green[**4,000円お得**（31%）]")
+    # 市場価格の方が安いときは、お得とは出さず、そう添える
+    assert price_text(9000, 8000, -1000, -12, "市場価格") == "福利厚生 9,000円　:gray[市場価格の方が1,000円安い]"
     # 定価以下のときは、これまでどおり福利厚生価格だけ
     assert price_text(5000, 5000, 0, 0, "定価") == "福利厚生 5,000円"
 
@@ -447,14 +448,14 @@ def test_price_text_with_market_price():
 def test_item_price_text_matches_benefit_item():
     stay = Menu(id="m1", tenant_id="t", name="宿", category="stay", plans=[plan_for_two()])
     item = day_plan.benefit_item("夜", stay, 8000, markets={"p1": market_price()})
-    assert item_price_text(item) == (":gray[1人あたり] :gray[~~一般サイト 13,000円~~ →] **9,000円**　"
+    assert item_price_text(item) == (":gray[1人あたり] :gray[~~市場価格 13,000円~~ →] **9,000円**　"
                                      ":green[**4,000円お得**（31%）]　:gray[（2名で18,000円）]　:orange-badge[予算＋1,000円]")
 
 
 def test_best_saving_plan_mixes_market_and_list_price_per_plan():
-    # 一般サイトの価格が取れたプランはそれと、取れなかったプランは定価と比べたお得額で選ぶ
-    # 素泊まり: 一般サイト 1人8,000円 − 福利厚生 6,000円 = 2,000円お得（定価と比べれば 4,000円だが、一般サイトの価格を使う）
-    # 2食付き: 一般サイトの価格なし → 定価 1人15,000円 − 福利厚生 12,000円 = 3,000円お得
+    # 市場価格が取れたプランはそれと、取れなかったプランは定価と比べたお得額で選ぶ
+    # 素泊まり: 市場価格 1人8,000円 − 福利厚生 6,000円 = 2,000円お得（定価と比べれば 4,000円だが、市場価格を使う）
+    # 2食付き: 市場価格なし → 定価 1人15,000円 − 福利厚生 12,000円 = 3,000円お得
     room_only = Plan(id="p-room", menu_id="s1", name="素泊まり", list_price=20000, benefit_price=12000, nights=1, adults=2)
     two_meals = Plan(id="p-meals", menu_id="s1", name="2食付き", list_price=30000, benefit_price=24000, nights=1, adults=2)
     stay = Menu(id="s1", tenant_id="t", name="宿", category="stay", plans=[room_only, two_meals])
@@ -462,7 +463,7 @@ def test_best_saving_plan_mixes_market_and_list_price_per_plan():
     assert day_plan.best_saving_plan(stay, markets=markets).name == "2食付き"
     item = day_plan.benefit_item("夜", stay, None, markets=markets)
     assert (item.plan_name, item.compared_to, item.saving) == ("2食付き", "定価", 3000)
-    # 一般サイトの価格がなければ、定価と比べて素泊まり（4,000円お得）
+    # 市場価格がなければ、定価と比べて素泊まり（4,000円お得）
     assert day_plan.best_saving_plan(stay).name == "素泊まり"
 
 

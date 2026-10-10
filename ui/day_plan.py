@@ -19,7 +19,7 @@ def price_text(price: Optional[int], compared_price: Optional[int] = None, savin
     """「定価 15,000円 → 10,500円　4,500円お得（30%）（2名で21,000円）」の形。お得額がなければ福利厚生価格だけ。
 
     お得額と割合は計算せず、plan_saving（day_plan.py）で計算済みの値を受け取って出すだけ。
-    compared_to が「一般サイト」なら「一般サイト 〇〇円 →」と出し、一般サイトの方が安ければそう添える。
+    compared_to が「市場価格」なら「市場価格 〇〇円 →」と出し、市場価格の方が安ければそう添える。
     金額は1人あたり。料金プランが2名分などのときは、料金プランに書かれた金額を（2名で〇〇円）と添える。
     1日プランと、検索画面の施設一覧・詳細画面で使う（同じ見た目にそろえるため）。
     """
@@ -30,7 +30,7 @@ def price_text(price: Optional[int], compared_price: Optional[int] = None, savin
         new_price = f"**{price:,}円**"
         text = f"{old_price} {new_price}　:green[**{saving:,}円お得**（{saving_rate}%）]"
     elif saving and saving < 0 and compared_to == COMPARED_TO_MARKET:
-        text = f"福利厚生 {price:,}円　:gray[一般サイトの方が{-saving:,}円安い]"
+        text = f"福利厚生 {price:,}円　:gray[市場価格の方が{-saving:,}円安い]"
     else:
         text = f"福利厚生 {price:,}円"
     if plan_people and plan_people > 1 and plan_price is not None:
