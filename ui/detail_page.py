@@ -1,16 +1,17 @@
-"""詳細画面。施設の見出しと、4つのタブ（価格比較／プラン・条件／口コミ／周辺）を持つ。
+"""詳細画面。施設の見出しと、3つのタブ（プラン・条件／口コミ／周辺）を持つ。
 
 検索結果や1日プランで施設名を押すと、open_detail() で施設を覚えて、この画面に移る。
-各タブの中身は担当ごとのファイルが描く。まだないタブは「準備中」と出し、TODO の印を付けている。
+各タブの中身は担当ごとのファイルが描く。クーポンのカードは、プラン・条件タブの各料金プランの下に出す。
 """
 from __future__ import annotations
 
 import streamlit as st
 
 from day_plan import load_market_prices, plan_saving
-from models import CATEGORIES, Menu
+from models import CATEGORIES, Menu, User
 from search import get_menu
 from session import require_login
+from ui.coupon_card import render_coupon_card
 from ui.review_tab import render_review_tab
 from ui.spots_tab import render_spots_tab
 
@@ -57,22 +58,19 @@ def render() -> None:
     if menu.description:
         st.write(menu.description)
 
-    # ③ 4つのタブ
-    tab_price, tab_plans, tab_reviews, tab_spots = st.tabs(
-        [":material/payments: 価格比較", ":material/bed: プラン・条件", ":material/reviews: 口コミ", ":material/map: 周辺"])
-    with tab_price:
-        # TODO(ui/price_tab.py): じゅんぺいさん担当。render_price_tab(user, menu) ができたら、この1行をその呼び出しに置き換える
-        st.info("一般サイトとの価格比較は準備中です。")
+    # ③ 3つのタブ
+    tab_plans, tab_reviews, tab_spots = st.tabs(
+        [":material/bed: プラン・条件", ":material/reviews: 口コミ", ":material/map: 周辺"])
     with tab_plans:
-        _render_plans_and_conditions(menu)
+        _render_plans_and_conditions(user, menu)
     with tab_reviews:
         render_review_tab(user, menu)
     with tab_spots:
         render_spots_tab(user, menu)
 
 
-def _render_plans_and_conditions(menu: Menu) -> None:
-    """プラン・条件タブ。料金プランごとの内容と金額、施設の利用条件を並べる。"""
+def _render_plans_and_conditions(user: User, menu: Menu) -> None:
+    """プラン・条件タブ。料金プランごとの内容と金額（クーポンがあればその下にカード）、施設の利用条件を並べる。"""
     # ① 料金プラン（福利厚生価格の安い順）
     st.markdown("**料金プラン**")
     if not menu.plans:
@@ -91,6 +89,9 @@ def _render_plans_and_conditions(menu: Menu) -> None:
             compare = plan_saving(plan, markets.get(plan.id))
             st.markdown(price_text(compare.benefit_price, compare.compared_price, compare.saving, compare.saving_rate,
                                    compare.compared_to, plan_price=plan.benefit_price, plan_people=plan.adults or 1))
+            # クーポンがあれば、料金プランの下にカードを出す（表示と記録は ui/coupon_card.py に任せる）
+            if plan.coupon_code:
+                render_coupon_card(user, menu, plan)
 
     # ② 利用条件
     st.markdown("**利用条件**")
