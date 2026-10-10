@@ -1,7 +1,7 @@
-"""一般サイトの価格の取得。楽天トラベルの空室検索APIで、宿の最安料金を取る。
+"""市場価格の取得。楽天トラベルの空室検索APIで、宿の最安料金を取る。
 
 - 楽天のアプリID・アクセスキーがない、または hotel_ref が楽天のホテル番号（数字）でない宿は、仮の価格（ダミー）を返す
-- 取得に失敗したときは例外を投げる。再試行と停止は呼び出し側（update.py）が決める
+- 取得に失敗したときは例外を投げる。再試行と停止は呼び出し側（update.py・refresh.py）が決める
 - 2026年の楽天ウェブサービスの新しい仕様に合わせている（新しいドメイン、アプリIDとアクセスキーの両方が必要）
 """
 from __future__ import annotations
@@ -46,7 +46,7 @@ def is_rakuten_ref(hotel_ref: Optional[str]) -> bool:
 
 def fetch_price(hotel_ref: str, checkin: date, nights: int, adults: int, creds: Optional[Credentials] = None,
                 reference_price: Optional[int] = None) -> Fetched:
-    """宿・日程・人数で、一般サイトの最安の合計料金を返す。APIを使えない宿は仮の価格。
+    """宿・日程・人数で、楽天トラベルの最安の合計料金を返す。APIを使えない宿は仮の価格。
 
     reference_price は仮の価格の元にする定価（同じ人数・1泊）。update.py が料金プランから渡す。
     """

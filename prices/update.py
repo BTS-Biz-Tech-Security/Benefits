@@ -1,4 +1,4 @@
-"""宿の一般サイトの価格をまとめて取得し、market_prices と fetch_logs に保存する。
+"""宿の市場価格（楽天トラベルの価格）をまとめて取得し、market_prices と fetch_logs に保存する。
 
 使い方: python -m prices.update [--checkin 2026-11-21] [--nights 1] [--adults 2] [--dry-run]
 - 宿（category=stay）で hotel_ref のある施設が対象
@@ -6,7 +6,8 @@
 - 取得した価格は「比べる日」の価格として保存する（is_representative=true。前の値はフラグを外して残す）
 - 連続 STOP_AFTER 回失敗したら止め、fetch_logs に stopped=true を残す
 - --dry-run は取得した価格を表示するだけで、データベースには書かない
-- GitHub Actions（.github/workflows/update_prices.yml）で1日1回自動で動かす。そのときは secrets.toml がないので、環境変数から読む
+- 最初にまとめて入れるときや、仮の価格を入れ直すときに手で動かす。検索のたびの取り直しは prices/refresh.py が行う
+- secrets.toml がない環境では、環境変数から接続情報を読む
 """
 from __future__ import annotations
 
@@ -14,11 +15,12 @@ import argparse
 import os
 import time
 import tomllib
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 from prices.rakuten import Credentials, Fetched, fetch_price
+from prices.refresh import next_saturday, save_price
 
 ROOT = Path(__file__).resolve().parent.parent
 STOP_AFTER = 5
@@ -26,14 +28,8 @@ RETRY = 2
 INTERVAL_SEC = 1.0  # 楽天への問い合わせの間隔（続けて呼ぶと一時的に止められるため）
 
 
-def next_saturday(today: Optional[date] = None) -> date:
-    """次の土曜の日付（比べる日の既定）。今日が土曜なら翌週の土曜。"""
-    d = today or date.today()
-    return d + timedelta(days=(5 - d.weekday()) % 7 or 7)
-
-
 def load_config() -> dict[str, Any]:
-    """接続情報を読む。secrets.toml があればそれを、なければ環境変数（GitHub Actions 用）を使う。"""
+    """接続情報を読む。secrets.toml があればそれを、なければ環境変数を使う。"""
     # ① 手元で動かすときは secrets.toml
     path = ROOT / ".streamlit" / "secrets.toml"
     if path.exists():
@@ -41,7 +37,7 @@ def load_config() -> dict[str, Any]:
         rak = sec.get("rakuten", {})
         creds = Credentials(rak.get("application_id", ""), rak.get("access_key", ""), rak.get("referer", ""))
         return {"url": sec["supabase"]["url"], "key": sec["supabase"]["anon_key"], "creds": creds}
-    # ② 自動で動かすときは環境変数
+    # ② secrets.toml がなければ環境変数
     creds = Credentials(os.environ.get("RAKUTEN_APPLICATION_ID", ""), os.environ.get("RAKUTEN_ACCESS_KEY", ""),
                         os.environ.get("RAKUTEN_REFERER", ""))
     return {"url": os.environ["SUPABASE_URL"], "key": os.environ["SUPABASE_ANON_KEY"], "creds": creds}
@@ -80,7 +76,7 @@ def fetch_with_retry(menu: dict[str, Any], checkin: date, nights: int, adults: i
 
 
 def main() -> None:
-    """宿の一般サイトの価格を取得し、market_prices と fetch_logs に保存する。"""
+    """宿の市場価格を取得し、market_prices と fetch_logs に保存する。"""
     ap = argparse.ArgumentParser()
     ap.add_argument("--checkin", type=date.fromisoformat, default=next_saturday())
     ap.add_argument("--nights", type=int, default=1)
@@ -128,12 +124,8 @@ def main() -> None:
         print(f"  {m['name']}: {fetched.price:,}円（{fetched.source}）")
         # ④ 比べる日の印を付け替えて保存する（前の値は残す）
         if not args.dry_run:
-            c.table("market_prices").update({"is_representative": False}).eq("menu_id", m["id"]).execute()
-            c.table("market_prices").insert({
-                "menu_id": m["id"], "hotel_ref": m["hotel_ref"], "checkin": args.checkin.isoformat(), "nights": args.nights,
-                "adults": args.adults, "children": 0, "price": fetched.price, "source": fetched.source,
-                "source_url": fetched.source_url, "fetched_at": datetime.now(timezone.utc).isoformat(), "is_representative": True,
-            }).execute()
+            save_price(c.table, m["id"], m["hotel_ref"], args.checkin, args.nights, args.adults, fetched,
+                       datetime.now(timezone.utc))
         if fetched.source == "rakuten_api":
             time.sleep(INTERVAL_SEC)
 
