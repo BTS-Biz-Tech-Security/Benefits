@@ -61,7 +61,7 @@ def _render_menu_list(menus: list[Menu], key_prefix: str, budget: Optional[int] 
     budget（1人あたり）を渡すと、budget_categories のカテゴリの施設で予算を超えるものに「予算＋〇〇円」のバッジを付ける。
     既定は宿だけ（1日プラン提案の「宿代の予算」）。施設を検索タブでは、選んだカテゴリ（「すべて」なら全カテゴリ）を渡す。
     budget_allowance を渡すと、予算 × budget_allowance 以内のプランの金額を出す（1日プラン提案タブ。1日プランと同じ金額にするため）。
-    markets（料金プランの id → 一般サイトの価格）を渡すと、価格が取れたプランのお得額は一般サイトの価格と比べる（1日プラン提案タブ）。
+    markets（料金プランの id → 一般サイトの価格）を渡すと、価格が取れたプランのお得額は一般サイトの価格と比べる（両方のタブ）。
 
     TODO(results_page.py): この一覧は仮のもの。一覧の表示と並び替えは ui/results_page.py（じゅんぺいさん担当）の役割なので、
     results_page.py ができたら、この関数の中身をその表示（render_results）の呼び出しに置き換える。
@@ -177,20 +177,24 @@ def _condition_tab(tenant_id: str) -> None:
                 # ② 検索する（このタブでは1日プランは組まない）
                 menus = search_menus(tenant_id, area_code=area_code, category=category_key,
                                      people=int(people), budget=budget_value, budget_categories=budget_categories)
+                # お得額は1日プランと同じく、一般サイトの価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
+                markets = load_market_prices(menus)
                 # ③ 画面が再実行されても結果が消えないよう保存しておく
                 st.session_state["search_condition_result"] = {"menus": menus, "budget": budget_value,
-                                                               "budget_categories": budget_categories}
+                                                               "budget_categories": budget_categories, "markets": markets}
 
     # ④ 検索結果の施設一覧だけを、折りたたまずに表示する
     if "search_condition_result" in st.session_state:
         menus = st.session_state["search_condition_result"]["menus"]
         budget_value = st.session_state["search_condition_result"].get("budget")
         budget_categories = st.session_state["search_condition_result"].get("budget_categories", ["stay"])
+        markets = st.session_state["search_condition_result"].get("markets")
         if not menus:
             st.info(NOT_FOUND)
         else:
             st.markdown(f"**見つかった施設：{len(menus)}件**")
-            _render_menu_list(menus, key_prefix="search-tab", budget=budget_value, budget_categories=budget_categories)
+            _render_menu_list(menus, key_prefix="search-tab", budget=budget_value, budget_categories=budget_categories,
+                              markets=markets)
 
 
 def render() -> None:

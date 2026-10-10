@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from day_plan import compare_price
+from day_plan import compare_price, load_market_prices
 from models import CATEGORIES, Menu
 from search import get_menu
 from session import require_login
@@ -77,6 +77,7 @@ def _render_plans_and_conditions(menu: Menu) -> None:
     st.markdown("**料金プラン**")
     if not menu.plans:
         st.caption("料金プランは登録されていません。")
+    markets = load_market_prices([menu])  # 料金プランの id → 一般サイトの価格（取れたプランだけ）
     for plan in menu.plans:
         with st.container(border=True):
             st.markdown(f"**{plan.name}**")
@@ -85,8 +86,9 @@ def _render_plans_and_conditions(menu: Menu) -> None:
             # 1日プランや一覧と同じ見せ方（1人あたりの金額と、料金プランに書かれた金額）
             # ui.day_plan は ui.detail_page を読み込んでいるので、ここで読み込む（ファイルの先頭で読むと循環してしまう）
             from ui.day_plan import price_text
-            # お得額は compare_price で計算する。詳細画面は定価と比べる（一般サイトとの比較は価格比較タブ）
-            compare = compare_price(plan, None)
+            # お得額は1日プラン・施設一覧と同じく compare_price で計算する
+            # 一般サイトの価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
+            compare = compare_price(plan, markets.get(plan.id))
             st.markdown(price_text(compare.benefit_price, compare.compared_price, compare.saving, compare.saving_rate,
                                    compare.compared_to, plan_price=plan.benefit_price, plan_people=plan.adults or 1))
 
