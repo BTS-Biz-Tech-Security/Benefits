@@ -8,6 +8,7 @@ from typing import Any, Iterable, Optional, cast
 
 from db import table
 from models import MENU_COLUMNS, Area, Menu, Plan
+from prices.refresh import refresh_market_prices
 
 
 def rows_of(query: Any) -> list[dict[str, Any]]:
@@ -141,9 +142,12 @@ def search_menus(tenant_id: str, *, area_code: Optional[str] = None, category: O
     area_names = None
     if keywords:
         area_names = {area.id: area.name for area in list_areas(tenant_id)}
-    return filter_menus(menus, people=people, budget=budget, keywords=keywords,
-                        budget_categories=list(budget_categories), area_names=area_names,
-                        budget_allowance=budget_allowance)
+    found = filter_menus(menus, people=people, budget=budget, keywords=keywords,
+                         budget_categories=list(budget_categories), area_names=area_names,
+                         budget_allowance=budget_allowance)
+    # 宿の市場価格を楽天から取り直し、DBの値と違えば上書きしてから後の計算に渡す
+    refresh_market_prices(found)
+    return found
 
 
 def get_menu(menu_id: str, tenant_id: Optional[str] = None) -> Optional[Menu]:
