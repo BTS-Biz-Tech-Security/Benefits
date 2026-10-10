@@ -13,12 +13,12 @@ from typing import Any, Iterable, Optional
 
 import streamlit as st
 
-from day_plan import BUDGET_ALLOWANCE, DayPlan, benefit_item, make_day_plans
+from day_plan import BUDGET_ALLOWANCE, DayPlan, MarketsByPlan, benefit_item, load_market_prices, make_day_plans
 from models import CATEGORIES, Menu
 from nl_search import SEARCH_FOCUS_OPTIONS, ai_available, parse_plan
 from search import list_areas, search_menus
 from session import require_login
-from ui.day_plan import price_text, render_day_plan
+from ui.day_plan import item_price_text, render_day_plan
 from ui.detail_page import open_detail
 
 WEEKDAY_NAMES = ["月", "火", "水", "木", "金", "土", "日"]
@@ -53,13 +53,15 @@ NOT_FOUND = "条件に合う施設が見つかりませんでした。条件を�
 
 
 def _render_menu_list(menus: list[Menu], key_prefix: str, budget: Optional[int] = None,
-                      budget_categories: Iterable[str] = ("stay",), budget_allowance: Optional[float] = None) -> None:
+                      budget_categories: Iterable[str] = ("stay",), budget_allowance: Optional[float] = None,
+                      markets: Optional[MarketsByPlan] = None) -> None:
     """施設の一覧をカードで並べる。両方のタブで使う。「詳細を見る」ボタンで詳細画面に移る。
 
     key_prefix はボタンの名前の頭に付ける文字。同じ施設が両方のタブに出ても、ボタンの名前が重ならないようにする。
     budget（1人あたり）を渡すと、budget_categories のカテゴリの施設で予算を超えるものに「予算＋〇〇円」のバッジを付ける。
     既定は宿だけ（1日プラン提案の「宿代の予算」）。施設を検索タブでは、選んだカテゴリ（「すべて」なら全カテゴリ）を渡す。
     budget_allowance を渡すと、予算 × budget_allowance 以内のプランの金額を出す（1日プラン提案タブ。1日プランと同じ金額にするため）。
+    markets（料金プランの id → 一般サイトの価格）を渡すと、価格が取れたプランのお得額は一般サイトの価格と比べる（両方のタブ）。
 
     TODO(results_page.py): この一覧は仮のもの。一覧の表示と並び替えは ui/results_page.py（じゅんぺいさん担当）の役割なので、
     results_page.py ができたら、この関数の中身をその表示（render_results）の呼び出しに置き換える。
@@ -67,14 +69,14 @@ def _render_menu_list(menus: list[Menu], key_prefix: str, budget: Optional[int] 
     for menu in menus:
         # 1日プランと同じく、お得額が最大の料金プランの金額を出す
         # 1日プランと同じ計算（お得額が最大の料金プラン、1人あたりの金額、宿だけ予算と比べる）
-        item = benefit_item("", menu, budget, budget_categories, budget_allowance)
+        item = benefit_item("", menu, budget, budget_categories, budget_allowance, markets)
         with st.container(border=True):
             # 左に施設の情報、右に「詳細を見る」ボタン
             col_info, col_button = st.columns([5, 1], vertical_alignment="center")
             plan_name = f"・{item.plan_name}" if item.plan_name else ""
             col_info.markdown(f"**{menu.name}**　:gray[{_category_label(menu.category)}{plan_name}]")
             if item.price is not None:
-                col_info.markdown(price_text(item.list_price, item.price, item.over_budget, item.plan_price, item.plan_people))
+                col_info.markdown(item_price_text(item))
             else:
                 col_info.caption("価格未登録")
             if menu.description:
@@ -83,7 +85,8 @@ def _render_menu_list(menus: list[Menu], key_prefix: str, budget: Optional[int] 
                               on_click=open_detail, args=(menu.id,))
 
 
-def _render_plans_and_list(menus: list[Menu], plans: list[DayPlan], budget: Optional[int]) -> None:
+def _render_plans_and_list(menus: list[Menu], plans: list[DayPlan], budget: Optional[int],
+                           markets: Optional[MarketsByPlan] = None) -> None:
     """「1日プラン提案」タブの結果。1日プランを並べ、その下に施設一覧を折りたたんで置く。"""
     if not menus:
         st.info(NOT_FOUND)
@@ -92,7 +95,7 @@ def _render_plans_and_list(menus: list[Menu], plans: list[DayPlan], budget: Opti
     for plan in plans:
         render_day_plan(plan)
     with st.expander(f"検索結果の施設一覧（{len(menus)}件）"):
-        _render_menu_list(menus, key_prefix="plan-tab", budget=budget, budget_allowance=BUDGET_ALLOWANCE)
+        _render_menu_list(menus, key_prefix="plan-tab", budget=budget, budget_allowance=BUDGET_ALLOWANCE, markets=markets)
 
 
 def _text_tab(tenant_id: str) -> None:
@@ -125,10 +128,14 @@ def _text_tab(tenant_id: str) -> None:
                     # 宿は予算の1.5倍（BUDGET_ALLOWANCE）まで残し、超える額はバッジで示す。「施設を検索」タブは予算ちょうどまで
                     menus = search_menus(tenant_id, people=conditions["people"], budget=conditions["budget"], keywords=words,
                                          budget_allowance=BUDGET_ALLOWANCE)
-                    plans = make_day_plans(tenant_id, menus, plan_text, budget=conditions["budget"], requested_area_names=words)
+                    # お得額は、一般サイトの価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
+                    markets = load_market_prices(menus)
+                    plans = make_day_plans(tenant_id, menus, plan_text, budget=conditions["budget"], requested_area_names=words,
+                                           markets=markets)
 
                     # ③ 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
-                    st.session_state["search_text_result"] = {"parsed": parsed, "menus": menus, "plans": plans}
+                    st.session_state["search_text_result"] = {"parsed": parsed, "menus": menus, "plans": plans,
+                                                              "markets": markets}
 
     if "search_text_result" in st.session_state:
         result = st.session_state["search_text_result"]
@@ -138,7 +145,7 @@ def _text_tab(tenant_id: str) -> None:
         if parsed.get("summary"):
             st.write(parsed["summary"])
         st.markdown(format_conditions(parsed["conditions"]))
-        _render_plans_and_list(result["menus"], result["plans"], parsed["conditions"]["budget"])
+        _render_plans_and_list(result["menus"], result["plans"], parsed["conditions"]["budget"], result.get("markets"))
         with st.expander(f"使用した検索キーワード（{len(parsed.get('keywords', []))}個）"):
             for item in parsed.get("keywords", []):
                 st.markdown(f"**{item.get('keyword', '')}**（{item.get('category', '')}）　:gray[{item.get('reason', '')}]")
@@ -170,20 +177,24 @@ def _condition_tab(tenant_id: str) -> None:
                 # ② 検索する（このタブでは1日プランは組まない）
                 menus = search_menus(tenant_id, area_code=area_code, category=category_key,
                                      people=int(people), budget=budget_value, budget_categories=budget_categories)
+                # お得額は1日プランと同じく、一般サイトの価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
+                markets = load_market_prices(menus)
                 # ③ 画面が再実行されても結果が消えないよう保存しておく
                 st.session_state["search_condition_result"] = {"menus": menus, "budget": budget_value,
-                                                               "budget_categories": budget_categories}
+                                                               "budget_categories": budget_categories, "markets": markets}
 
     # ④ 検索結果の施設一覧だけを、折りたたまずに表示する
     if "search_condition_result" in st.session_state:
         menus = st.session_state["search_condition_result"]["menus"]
         budget_value = st.session_state["search_condition_result"].get("budget")
         budget_categories = st.session_state["search_condition_result"].get("budget_categories", ["stay"])
+        markets = st.session_state["search_condition_result"].get("markets")
         if not menus:
             st.info(NOT_FOUND)
         else:
             st.markdown(f"**見つかった施設：{len(menus)}件**")
-            _render_menu_list(menus, key_prefix="search-tab", budget=budget_value, budget_categories=budget_categories)
+            _render_menu_list(menus, key_prefix="search-tab", budget=budget_value, budget_categories=budget_categories,
+                              markets=markets)
 
 
 def render() -> None:
