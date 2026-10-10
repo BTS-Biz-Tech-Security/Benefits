@@ -14,7 +14,7 @@ def render() -> None:
     st.subheader(":material/confirmation_number: クーポン使用履歴")
     logs = table("activity_logs").select("*").eq("user_id", user.id).eq("kind", "coupon").order("occurred_at", desc=True).execute().data
     if not logs:
-        st.info("まだクーポンを使っていません。施設の詳細の価格比較タブで「クーポンを使って予約する」を押すと、ここに残ります。")
+        st.info("まだクーポンを使っていません。施設の詳細のプラン・条件タブで「クーポンを使って予約する」を押すと、ここに残ります。")
         return
     plan_ids = [l["plan_id"] for l in logs if l.get("plan_id")]
     plans = {p["id"]: Plan.from_row(p) for p in table("plans").select("*").in_("id", plan_ids).execute().data} if plan_ids else {}
