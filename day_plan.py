@@ -10,14 +10,14 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
 from db import table
 from models import MarketPrice, Menu, Plan
 from nl_search import MODEL, llm_api_key
 from pricing import normalize
-from search import list_areas, per_person
+from search import count_keyword_hits, list_areas, per_person
 from spots import spots_by_area
 
 # 枠と、その枠に入れるカテゴリ（この順に並べる）
@@ -28,6 +28,8 @@ MAX_PLANS = 3
 # 1日プラン提案で、宿代の予算の何倍までの宿を残すか。超えてもお得な宿を、超える額とあわせて見せるため
 BUDGET_ALLOWANCE = 1.5
 KIND_LABELS = {"benefit": "福利厚生", "spot": "周辺スポット", "free": "自由時間"}
+# nl_search が読み取ったキーワードの分類のうち、遊びの希望（例:「ゴルフ」）
+ACTIVITY_CATEGORY = "アクティビティ"
 
 
 @dataclass
@@ -76,6 +78,7 @@ class DayPlan:
     budget: Optional[int] = None  # 宿代の予算（1泊・1人あたり）。宿泊施設にだけ当てはめる
     alternative: bool = False  # 利用者が挙げたエリア以外の代替案のとき True
     day_trip_requested: bool = False  # 利用者が日帰りと書いたとき True（宿を探していない）。False で day_trip なら、宿が見つからなかった
+    unmet_activities: list[str] = field(default_factory=list)  # 遊びの希望のうち、このエリアの施設にも周辺スポットにもないもの
 
     @property
     def total_saving(self) -> int:
@@ -207,6 +210,22 @@ def _pick_spot(spots: list[Spot], kind: str, used: set[str]) -> Optional[Spot]:
     return None
 
 
+def activity_keywords(keywords: Iterable[dict[str, Any]]) -> list[str]:
+    """読み取ったキーワード（[{keyword, category, reason}]）のうち、遊びの希望（アクティビティ）に分類されたもの。"""
+    return [k["keyword"] for k in keywords if k.get("category") == ACTIVITY_CATEGORY and k.get("keyword")]
+
+
+def unmet_activities(menus: list[Menu], spots: list[Spot], activities: Iterable[str]) -> list[str]:
+    """遊びの希望のうち、施設（施設名・所在地・紹介文・タグ）にも周辺スポット（名前・紹介文）にも書かれていないもの。"""
+    spot_texts = [f"{s.name} {s.description or ''}" for s in spots]
+    unmet = []
+    for activity in activities:
+        if any(count_keyword_hits(m, [activity]) for m in menus) or any(activity in t for t in spot_texts):
+            continue
+        unmet.append(activity)
+    return unmet
+
+
 def benefit_item(slot: str, menu: Menu, budget: Optional[int], budget_categories: Iterable[str] = ("stay",),
                  budget_allowance: Optional[float] = None, markets: Optional[MarketsByPlan] = None) -> PlanItem:
     """福利厚生の施設を、プランの1枠にする。金額はお得額が最大の料金プランのもので、1人あたりにする。
@@ -241,7 +260,8 @@ def benefit_item(slot: str, menu: Menu, budget: Optional[int], budget_categories
 def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
                    area_id: Optional[str] = None, budget: Optional[int] = None,
                    budget_allowance: Optional[float] = None,
-                   markets: Optional[MarketsByPlan] = None, day_trip: bool = False) -> Optional[DayPlan]:
+                   markets: Optional[MarketsByPlan] = None, day_trip: bool = False,
+                   activities: Iterable[str] = ()) -> Optional[DayPlan]:
     """1つのエリアのプランを組む。area_id を省略すると、検索結果のいちばん上のエリアで組む。
 
     宿代の予算を超える宿も選び、超える額を記録する（超えてもお得なことを、表示と説明文で伝えるため）。
@@ -249,6 +269,8 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
     markets（料金プランの id → 市場価格）にあるプランは、お得額を市場価格と比べる。ないプランは定価と比べる。
     予算は宿代の上限なので、食事・レジャーには当てはめない。
     day_trip（利用者が日帰りと書いたとき）が True なら、宿があっても夜の枠は出さない。
+    activities（遊びの希望。例:「ゴルフ」）のうち、このエリアで叶えられないものがあれば、レジャーの枠を周辺スポットで埋めず、
+    自由時間にする（希望と関係のないスポットで埋めず、その希望に使える時間として空けておくため）。
     DB も AI も使わない。
     """
     # ① エリアを決め、そのエリアの施設だけにする
@@ -257,6 +279,7 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
     if area_id is None:
         return None
     area_menus = [m for m in menus if m.area_id == area_id]
+    unmet = unmet_activities(area_menus, spots, activities)
 
     # ② 枠ごとに、福利厚生の施設 → 周辺スポット → 自由時間 の順で埋める。同じ場所は2回使わない
     used: set[str] = set()
@@ -271,7 +294,8 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
             continue
         if category == "stay":
             continue  # 周辺スポットには宿泊がないので、夜の枠は出さない（日帰り）
-        spot = _pick_spot(spots, category, used)
+        # 叶えられない遊びの希望があるときは、レジャーの枠を周辺スポットで埋めない（自由時間にする）
+        spot = None if (category == "leisure" and unmet) else _pick_spot(spots, category, used)
         if spot is not None:
             used.add(spot.id)
             items.append(PlanItem(slot=slot, kind="spot", name=spot.name, category=category,
@@ -284,7 +308,7 @@ def build_day_plan(menus: list[Menu], spots: list[Spot], area_name: str,
     total_price = sum(prices) if prices else None
     has_night = any(item.slot == NIGHT for item in items)
     return DayPlan(area_id=area_id, area_name=area_name, items=items, day_trip=not has_night,
-                   total_price=total_price, budget=budget, day_trip_requested=day_trip)
+                   total_price=total_price, budget=budget, day_trip_requested=day_trip, unmet_activities=unmet)
 
 
 def explain_by_rule(plan: DayPlan) -> str:
@@ -342,10 +366,15 @@ def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
         "「自由時間」の枠は、その時間の過ごし方に一般的な言葉で触れる程度にすること",
         "金額はすべて1人あたり。お得額があれば、1人あたり合計でいくらお得かに触れること",
         "宿代の予算を超える宿があれば、超える額とお得額の両方を示し、お得感の大きさを伝えること。お得額が超える額より小さいときは、そう正直に書くこと",
+        "利用者の希望のうち、プランのどの枠でも叶えられていないもの（例：希望した遊びの施設が入っていない）があれば、"
+        "1文で「〇〇に合う福利厚生メニューは見つかりませんでした」と正直に書くこと。叶えられているかのように書かないこと",
     ]
     if any(item.compared_to == COMPARED_TO_MARKET for item in plan.items):
         rules.append("お得額は、市場価格がある施設はそれと、ない施設は定価と比べたもの。施設ごとに、どちらと比べたかを取り違えないこと。"
                      "市場価格の方が安い施設があれば、そう正直に書くこと")
+    if plan.unmet_activities:
+        rules.append("「見つからなかった希望」に合う福利厚生メニューは見つからなかったので、そのことを正直に書くこと。"
+                     "自由時間の枠は、その希望に使える時間として触れてよい（ただし施設や店の名前は出さないこと）")
     if plan.alternative:
         rules.append("このプランは利用者が挙げたエリア以外からの代替案なので、冒頭でそのことを断り、代わりに勧める理由を書くこと")
     rules.append("説明文だけを出力すること")
@@ -358,6 +387,8 @@ def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
         prompt += f"宿代の予算（1泊・1人あたり）：{plan.budget:,}円\n"
     if plan.day_trip:
         prompt += "宿泊：なし（日帰り）\n"
+    if plan.unmet_activities:
+        prompt += f"見つからなかった希望：{'、'.join(plan.unmet_activities)}\n"
     prompt += "プラン：\n" + "\n".join(lines) + "\n"
     prompt += f"合計のお得額（1人あたり）：{plan.total_saving:,}円\n\n利用者の希望：{request_text}"
 
@@ -423,7 +454,8 @@ def load_market_prices(menus: list[Menu]) -> MarketsByPlan:
 
 def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget: Optional[int] = None,
                    requested_area_names: Iterable[str] = (),
-                   markets: Optional[MarketsByPlan] = None, day_trip: bool = False) -> list[DayPlan]:
+                   markets: Optional[MarketsByPlan] = None, day_trip: bool = False,
+                   activities: Iterable[str] = ()) -> list[DayPlan]:
     """画面から呼ぶ入口。エリアごとにプランを組み、説明文を付けて返す。組めなければ空のリスト。
 
     menus は検索結果の順位順に並んでいる前提（順位は ranking.py が決める）。
@@ -432,6 +464,7 @@ def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget:
     宿のプランは、宿代の予算 × BUDGET_ALLOWANCE 以内のものから選ぶ。
     markets（load_market_prices の結果）を渡すと、市場価格が取れたプランは、お得額をそれと比べる。
     day_trip（利用者が日帰りと書いたとき）が True なら、どのエリアでも夜の枠（宿）は出さない。
+    activities（遊びの希望）がエリアで叶えられないときは、そのエリアのレジャーの枠を周辺スポットで埋めず、自由時間にする。
     """
     # ① 検索結果に出てくるエリアを、上から順に全部取り出す
     area_ids = plan_area_ids(menus, limit=len(menus))
@@ -459,7 +492,7 @@ def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget:
             spots = []
         area_name = area_names.get(area_id, "")
         plan = build_day_plan(menus, spots, area_name, area_id=area_id, budget=budget, budget_allowance=BUDGET_ALLOWANCE,
-                              markets=markets, day_trip=day_trip)
+                              markets=markets, day_trip=day_trip, activities=activities)
         if plan is None:
             continue
         plan.alternative = bool(requested) and area_name not in requested
