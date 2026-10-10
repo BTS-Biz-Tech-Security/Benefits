@@ -13,7 +13,8 @@ from typing import Any, Iterable, Optional
 
 import streamlit as st
 
-from day_plan import BUDGET_ALLOWANCE, DayPlan, MarketsByPlan, benefit_item, load_market_prices, make_day_plans
+from day_plan import (BUDGET_ALLOWANCE, DayPlan, MarketsByPlan, activity_keywords, benefit_item, load_market_prices,
+                      make_day_plans)
 from models import CATEGORIES, Menu
 from nl_search import SEARCH_FOCUS_OPTIONS, ai_available, parse_plan
 from search import list_areas, search_menus
@@ -134,7 +135,8 @@ def _text_tab(tenant_id: str) -> None:
                     # お得額は、市場価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
                     markets = load_market_prices(menus)
                     plans = make_day_plans(tenant_id, menus, plan_text, budget=conditions["budget"], requested_area_names=words,
-                                           markets=markets, day_trip=conditions["day_trip"])
+                                           markets=markets, day_trip=conditions["day_trip"],
+                                           activities=activity_keywords(parsed["keywords"]))
 
                     # ③ 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
                     st.session_state["search_text_result"] = {"parsed": parsed, "menus": menus, "plans": plans,

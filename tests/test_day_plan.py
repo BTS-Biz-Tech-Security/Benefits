@@ -536,3 +536,60 @@ def test_day_trip_reason_tells_requested_from_not_found():
     assert (not_found.day_trip, not_found.day_trip_requested) == (True, False)
     assert day_trip_reason(requested) == "ご希望どおり宿泊なし"
     assert day_trip_reason(not_found) == "宿泊の施設が見つかりませんでした"
+
+
+def test_activity_keywords_picks_activity_category():
+    keywords = [{"keyword": "熱海", "category": "エリア"}, {"keyword": "ゴルフ", "category": "アクティビティ"},
+                {"keyword": "温泉", "category": "設備・サービス"}]
+    assert day_plan.activity_keywords(keywords) == ["ゴルフ"]
+
+
+def test_unmet_activity_leaves_leisure_slots_free():
+    # 「ゴルフ」はどこにもないので、余ったレジャーの枠は周辺スポットで埋めず自由時間にする。福利厚生の施設は残す
+    menus = [menu("l1", "leisure", price=3000), menu("s1", "stay", price=30000)]
+    spots = [spot("sp1", "meal"), spot("sp2", "leisure")]
+    plan = build_day_plan(menus, spots, "熱海", activities=["ゴルフ"])
+    assert plan is not None
+    assert summary(plan) == [("午前", "施設l1", "benefit"), ("昼", "スポットsp1", "spot"),
+                             ("午後", FREE_TIME, "free"), ("夜", "施設s1", "benefit")]
+    assert plan.unmet_activities == ["ゴルフ"]
+
+
+def test_met_activity_keeps_spots():
+    # 周辺スポットに希望が書かれていれば、今まで通りスポットで埋める
+    spots = [Spot(id="sp1", kind="leisure", name="ゴルフ練習場"), spot("sp2", "leisure")]
+    plan = build_day_plan([menu("s1", "stay", price=30000)], spots, "熱海", activities=["ゴルフ"])
+    assert plan is not None
+    assert [i.kind for i in plan.items] == ["spot", "free", "spot", "benefit"]
+    assert plan.unmet_activities == []
+
+
+def test_activity_found_in_menu_keeps_spots():
+    menus = [menu("l1", "leisure", price=3000)]
+    menus[0].tags = ["ゴルフ"]
+    plan = build_day_plan(menus, [spot("sp1", "leisure")], "箱根", activities=["ゴルフ"])
+    assert plan is not None
+    assert summary(plan)[2] == ("午後", "スポットsp1", "spot")
+
+
+def test_ai_prompt_mentions_unmet_activities(monkeypatch):
+    sent = {}
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            self.chat = self
+
+        @property
+        def completions(self):
+            return self
+
+        def create(self, model, messages, max_tokens):
+            sent["prompt"] = messages[0]["content"]
+            return type("R", (), {"choices": [type("C", (), {"message": type("M", (), {"content": "ok"})()})()]})()
+
+    import openai
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+    plan = build_day_plan([menu("s1", "stay", price=30000)], [], "熱海", activities=["ゴルフ"])
+    assert plan is not None
+    day_plan._explain_with_ai(plan, "熱海でゴルフ三昧", "key")
+    assert "見つからなかった希望：ゴルフ" in sent["prompt"]
