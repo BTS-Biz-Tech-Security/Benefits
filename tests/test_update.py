@@ -1,7 +1,8 @@
 from datetime import date
 
 from prices import update
-from prices.rakuten import Credentials
+from models import Plan
+from prices.rakuten import Credentials, Fetched
 
 
 def test_load_config_from_env(monkeypatch, tmp_path):
@@ -23,16 +24,14 @@ def test_load_config_from_file(tmp_path, monkeypatch):
     assert update.load_config() == {"url": "u", "key": "a", "creds": Credentials("r", "s", "")}
 
 
-def test_next_saturday():
-    assert update.next_saturday(date(2026, 10, 8)) == date(2026, 10, 10)  # 木曜 → その週の土曜
-    assert update.next_saturday(date(2026, 10, 10)) == date(2026, 10, 17)  # 土曜 → 翌週の土曜
+def test_fetch_with_retry_uses_plan_conditions(monkeypatch):
+    calls = []
 
-
-def test_reference_prices():
-    plans = [
-        {"menu_id": "a", "list_price": 26000, "adults": 2, "nights": 1},
-        {"menu_id": "a", "list_price": 38000, "adults": 2, "nights": 1},
-        {"menu_id": "b", "list_price": 30000, "adults": 3, "nights": 1},  # 2名のプランがない → 2名分に割り戻す
-        {"menu_id": "c", "list_price": 60000, "adults": 2, "nights": 2},  # 2泊 → 1泊あたり
-    ]
-    assert update.reference_prices(plans, 2) == {"a": 26000, "b": 20000, "c": 30000}
+    def fake(hotel_ref, checkin, nights, adults, creds, reference=None, meal=None):
+        calls.append((hotel_ref, nights, adults, reference, meal))
+        return Fetched(26000, "dummy", None)
+    monkeypatch.setattr(update, "fetch_price", fake)
+    plan = Plan(id="p", menu_id="m", name="2食付", list_price=30000, benefit_price=18000, nights=2, adults=3, meal="2食付き")
+    fetched, error = update.fetch_with_retry("12345", plan, date(2026, 10, 17), Credentials())
+    assert fetched.price == 26000 and error is None
+    assert calls == [("12345", 2, 3, 30000, "2食付き")]

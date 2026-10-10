@@ -3,14 +3,14 @@ from datetime import date
 import pytest
 
 from prices import rakuten
-from prices.rakuten import Credentials, dummy_price, fetch_price, hotel_url, is_rakuten_ref, room_totals
+from prices.rakuten import Credentials, dummy_price, fetch_price, hotel_url, is_rakuten_ref, meal_flags, room_totals
 
 CREDS = Credentials("app", "key")
 # 楽天の空室検索API（format=json）の応答の形。宿の情報と部屋ごとの料金が、部品に分かれて入っている
 RESPONSE = {"hotels": [{"hotel": [
     {"hotelBasicInfo": {"hotelNo": 123, "hotelInformationUrl": "https://travel.rakuten.co.jp/HOTEL/123/"}},
-    {"roomInfo": [{"roomBasicInfo": {"planName": "素泊まり"}}, {"dailyCharge": {"total": 24000, "chargeFlag": 1}}]},
-    {"roomInfo": [{"roomBasicInfo": {"planName": "2食付き"}}, {"dailyCharge": {"total": 31000, "chargeFlag": 1}}]},
+    {"roomInfo": [{"roomBasicInfo": {"planName": "素泊まり", "withDinnerFlag": 0, "withBreakfastFlag": 0}}, {"dailyCharge": {"total": 24000, "chargeFlag": 1}}]},
+    {"roomInfo": [{"roomBasicInfo": {"planName": "2食付き", "withDinnerFlag": 1, "withBreakfastFlag": 1}}, {"dailyCharge": {"total": 31000, "chargeFlag": 1}}]},
 ]}]}
 
 
@@ -79,3 +79,10 @@ def test_fetch_price_no_vacancy(monkeypatch):
     monkeypatch.setattr(rakuten.requests, "get", lambda *a, **k: FakeResponse(404, {}))
     with pytest.raises(ValueError):
         fetch_price("123", date(2026, 11, 21), 1, 2, CREDS)
+
+
+def test_room_totals_filters_by_meal():
+    assert room_totals(RESPONSE, meal_flags("2食付き")) == [31000]
+    assert room_totals(RESPONSE, meal_flags("素泊まり")) == [24000]
+    assert room_totals(RESPONSE, meal_flags(None)) == [24000, 31000]  # 条件なしは絞らない
+    assert room_totals(RESPONSE, meal_flags("朝食付き")) == []  # 合う部屋がない

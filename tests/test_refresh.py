@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 
-from models import Menu
+from models import Menu, Plan
 from prices import refresh
 from prices.rakuten import Credentials, Fetched
 
@@ -30,8 +30,8 @@ class FakeQuery:
         self.op, self.payload = "update", payload
         return self
 
-    def insert(self, payload):
-        self.op, self.payload = "insert", payload
+    def upsert(self, payload, on_conflict=None):
+        self.op, self.payload = "upsert", payload
         return self
 
     def execute(self):
@@ -47,13 +47,16 @@ class FakeDB:
         return FakeQuery(self, name)
 
 
-def menu(id="m1", category="stay", hotel_ref="12345"):
-    return Menu(id=id, tenant_id="t", name="宿", category=category, hotel_ref=hotel_ref)
+def plan(id="p1", menu_id="m1", adults=2, nights=1, meal="2食付き"):
+    return Plan(id=id, menu_id=menu_id, name="プラン", list_price=30000, benefit_price=18000, nights=nights, adults=adults, meal=meal)
 
 
-def row(price=20000, fetched_at=NOW - timedelta(hours=7), source="rakuten_api", checkin=CHECKIN, menu_id="m1"):
-    return {"menu_id": menu_id, "checkin": checkin.isoformat(), "price": price, "source": source,
-            "fetched_at": fetched_at.isoformat()}
+def menu(id="m1", category="stay", hotel_ref="12345", plans=None):
+    return Menu(id=id, tenant_id="t", name="宿", category=category, hotel_ref=hotel_ref, plans=plans if plans is not None else [plan(menu_id=id)])
+
+
+def row(price=20000, fetched_at=NOW - timedelta(hours=7), source="rakuten_api", checkin=CHECKIN, plan_id="p1"):
+    return {"plan_id": plan_id, "checkin": checkin.isoformat(), "price": price, "source": source, "fetched_at": fetched_at.isoformat()}
 
 
 def run(db, menus, price=20000, fetch=None):
@@ -68,8 +71,9 @@ def ops(db):
 def test_overwrites_when_price_differs():
     db = FakeDB([row(price=20000)])
     assert run(db, [menu()], price=22000) == 1
-    assert ops(db) == ["select", "update", "insert"]  # 前の値の印を外して、新しい値を入れる
-    assert db.calls[2][1]["price"] == 22000 and db.calls[2][1]["is_representative"] is True
+    assert ops(db) == ["select", "update", "upsert"]  # 前の値の印を外して、新しい値を入れる
+    saved = db.calls[2][1]
+    assert saved["price"] == 22000 and saved["plan_id"] == "p1" and saved["meal"] == "2食付き" and saved["is_representative"] is True
 
 
 def test_same_price_updates_only_fetched_at():
@@ -89,6 +93,17 @@ def test_recent_value_is_not_fetched_again():
 def test_dummy_value_is_replaced():
     db = FakeDB([row(source="dummy", fetched_at=NOW)])
     assert run(db, [menu()], price=20000) == 1
+
+
+def test_fetch_uses_plan_conditions():
+    calls = []
+
+    def fake(hotel_ref, checkin, nights, adults, creds, meal=None):
+        calls.append((hotel_ref, nights, adults, meal))
+        return Fetched(40000, "rakuten_api", None)
+    db = FakeDB([])
+    assert run(db, [menu(plans=[plan(adults=3, nights=2, meal="素泊まり")])], fetch=fake) == 1
+    assert calls == [("12345", 2, 3, "素泊まり")]
 
 
 def test_no_credentials_does_nothing():
@@ -113,8 +128,8 @@ def test_failure_keeps_db_value():
 
 def test_limits_per_search():
     db = FakeDB([])
-    menus = [menu(id=f"m{i}") for i in range(refresh.MAX_PER_SEARCH + 3)]
-    assert run(db, menus, price=20000) == refresh.MAX_PER_SEARCH
+    plans = [plan(id=f"p{i}") for i in range(refresh.MAX_PER_SEARCH + 3)]
+    assert run(db, [menu(plans=plans)], price=20000) == refresh.MAX_PER_SEARCH
 
 
 def test_needs_refresh_when_checkin_differs():

@@ -129,11 +129,12 @@ class MarketPrice:
     children: int = 0
     meal: Optional[str] = None
     source_url: Optional[str] = None
+    plan_id: Optional[str] = None  # どの料金プランの価格か。宿ごとの古い行は None
 
     @classmethod
     def from_row(cls, r: dict[str, Any]) -> "MarketPrice":
         return cls(
-            menu_id=r["menu_id"], checkin=date.fromisoformat(str(r["checkin"])), nights=int(r["nights"]),
+            menu_id=r["menu_id"], plan_id=r.get("plan_id"), checkin=date.fromisoformat(str(r["checkin"])), nights=int(r["nights"]),
             adults=int(r["adults"]), children=int(r.get("children") or 0), meal=r.get("meal"),
             price=int(r["price"]), source=r["source"], source_url=r.get("source_url"),
             fetched_at=datetime.fromisoformat(str(r["fetched_at"]).replace("Z", "+00:00")),

@@ -2,6 +2,7 @@
 
 - 楽天のアプリID・アクセスキーがない、または hotel_ref が楽天のホテル番号（数字）でない宿は、仮の価格（ダミー）を返す
 - 取得に失敗したときは例外を投げる。再試行と停止は呼び出し側（update.py・refresh.py）が決める
+- 価格は料金プランごとに取る（人数・泊数・食事の条件をプランに合わせる。部屋のグレードは区別しない）
 - 2026年の楽天ウェブサービスの新しい仕様に合わせている（新しいドメイン、アプリIDとアクセスキーの両方が必要）
 """
 from __future__ import annotations
@@ -44,11 +45,22 @@ def is_rakuten_ref(hotel_ref: Optional[str]) -> bool:
     return bool(hotel_ref) and hotel_ref.isdigit()
 
 
-def fetch_price(hotel_ref: str, checkin: date, nights: int, adults: int, creds: Optional[Credentials] = None,
-                reference_price: Optional[int] = None) -> Fetched:
-    """宿・日程・人数で、楽天トラベルの最安の合計料金を返す。APIを使えない宿は仮の価格。
+MEAL_FLAGS = {  # 料金プランの食事の条件 → 楽天の（夕食あり, 朝食あり）
+    "2食付き": (True, True), "2食付": (True, True), "朝食付き": (False, True), "朝食付": (False, True),
+    "素泊まり": (False, False), "なし": (False, False), "食事なし": (False, False),
+}
 
-    reference_price は仮の価格の元にする定価（同じ人数・1泊）。update.py が料金プランから渡す。
+
+def meal_flags(meal: Optional[str]) -> Optional[tuple[bool, bool]]:
+    """料金プランの食事の条件を、楽天の（夕食あり, 朝食あり）に直す。条件がない・分からないときは None（絞らない）。"""
+    return MEAL_FLAGS.get((meal or "").strip()) if meal else None
+
+
+def fetch_price(hotel_ref: str, checkin: date, nights: int, adults: int, creds: Optional[Credentials] = None,
+                reference_price: Optional[int] = None, meal: Optional[str] = None) -> Fetched:
+    """宿・日程・人数・食事の条件で、楽天トラベルの最安の合計料金を返す。APIを使えない宿は仮の価格。
+
+    reference_price は仮の価格の元にする定価（同じ人数・泊数）。meal は料金プランの食事の条件（同じ条件の部屋だけから選ぶ）。
     """
     # ① 接続情報がない、または楽天のホテル番号でなければ仮の価格
     if creds is None or not creds.ready() or not is_rakuten_ref(hotel_ref):
@@ -74,10 +86,10 @@ def fetch_price(hotel_ref: str, checkin: date, nights: int, adults: int, creds: 
     r.raise_for_status()
     data = r.json()
 
-    # ③ 部屋ごとの料金から最安を取る。料金は1泊目のものなので、泊数をかけて合計にする
-    totals = room_totals(data)
+    # ③ 食事の条件が合う部屋の料金から最安を取る。料金は1泊目のものなので、泊数をかけて合計にする
+    totals = room_totals(data, meal_flags(meal))
     if not totals:
-        raise ValueError("料金が見つかりません")
+        raise ValueError("条件に合う料金が見つかりません")
     return Fetched(min(totals) * nights, "rakuten_api", hotel_url(data))
 
 
@@ -93,16 +105,29 @@ def _hotel_parts(data: dict[str, Any]) -> list[dict[str, Any]]:
     return parts
 
 
-def room_totals(data: dict[str, Any]) -> list[int]:
-    """応答に含まれる部屋ごとの料金（dailyCharge の total）を集める。"""
+def room_totals(data: dict[str, Any], flags: Optional[tuple[bool, bool]] = None) -> list[int]:
+    """応答に含まれる部屋ごとの料金（dailyCharge の total）を集める。
+
+    flags（夕食あり, 朝食あり）を渡すと、roomBasicInfo の withDinnerFlag・withBreakfastFlag が一致する部屋だけにする。
+    roomInfo は [{"roomBasicInfo": {...}}, {"dailyCharge": {...}}] のように、1部屋の部品が順に並ぶ。
+    """
     totals: list[int] = []
     for part in _hotel_parts(data):
         rooms = part.get("roomInfo") or []
+        basic: dict[str, Any] = {}
         for room in rooms if isinstance(rooms, list) else [rooms]:
-            # roomInfo は [{"roomBasicInfo": {...}}, {"dailyCharge": {...}}] のように部品が分かれて入っている
-            charge = room.get("dailyCharge") if isinstance(room, dict) else None
-            if isinstance(charge, dict) and charge.get("total"):
-                totals.append(int(charge["total"]))
+            if not isinstance(room, dict):
+                continue
+            if isinstance(room.get("roomBasicInfo"), dict):
+                basic = room["roomBasicInfo"]
+            charge = room.get("dailyCharge")
+            if not (isinstance(charge, dict) and charge.get("total")):
+                continue
+            if flags is not None:
+                has = (bool(int(basic.get("withDinnerFlag") or 0)), bool(int(basic.get("withBreakfastFlag") or 0)))
+                if has != flags:
+                    continue
+            totals.append(int(charge["total"]))
     return totals
 
 
