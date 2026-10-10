@@ -141,10 +141,10 @@ def _text_tab(tenant_id: str) -> None:
         result = st.session_state["search_text_result"]
         parsed = result["parsed"]
         st.divider()
-        st.caption("こう読み取りました。違うときは「条件で探す」から検索してください。")
-        if parsed.get("summary"):
-            st.write(parsed["summary"])
-        st.markdown(format_conditions(parsed["conditions"]))
+        st.caption("こう読み取りました。違うときは「施設を検索」タブから検索してください。")
+        # 結果を見る前に、まず AI が読み取った内容を読んでもらうため、ロボットのアイコン付きの色枠に、要約（太字）と条件をまとめて出す
+        summary = f"**{parsed['summary']}**\n\n" if parsed.get("summary") else ""
+        st.info(summary + format_conditions(parsed["conditions"]), icon=":material/smart_toy:")
         _render_plans_and_list(result["menus"], result["plans"], parsed["conditions"]["budget"], result.get("markets"))
         with st.expander(f"使用した検索キーワード（{len(parsed.get('keywords', []))}個）"):
             for item in parsed.get("keywords", []):
