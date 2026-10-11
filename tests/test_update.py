@@ -48,3 +48,19 @@ def test_not_available_is_not_retried(monkeypatch):
     plan = Plan(id="p", menu_id="m", name="素泊まり", list_price=10000, benefit_price=6000, nights=1, adults=2, meal="なし")
     fetched, error = update.fetch_with_retry("12345", plan, date(2026, 10, 17), Credentials("a", "k"))
     assert fetched is None and str(error) == "空室がありません" and calls == [1]
+
+
+def test_fetch_first_date_moves_to_next_date(monkeypatch):
+    from prices.rakuten import NotAvailable
+    tried = []
+
+    def fake(hotel_ref, checkin, *args, **kwargs):
+        tried.append(checkin)
+        if checkin == date(2026, 11, 14):
+            raise NotAvailable("空室がありません")
+        return Fetched(30000, "rakuten_api", None)
+    monkeypatch.setattr(update, "fetch_price", fake)
+    monkeypatch.setattr(update.time, "sleep", lambda s: None)
+    plan = Plan(id="p", menu_id="m", name="素泊まり", list_price=10000, benefit_price=6000, nights=1, adults=2, meal="なし")
+    fetched, error, day = update.fetch_first_date("1", plan, [date(2026, 11, 14), date(2026, 12, 12)], Credentials("a", "k"))
+    assert (fetched.price, error, day) == (30000, None, date(2026, 12, 12))

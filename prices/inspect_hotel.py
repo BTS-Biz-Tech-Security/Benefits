@@ -14,7 +14,7 @@ from typing import Any
 import requests
 
 from prices.rakuten import API_URL, TIMEOUT, hotel_parts, request_headers, vacant_params
-from prices.refresh import next_saturday
+from prices.refresh import compare_dates
 
 
 def rooms(data: dict[str, Any]) -> list[tuple[dict[str, Any], dict[str, Any]]]:
@@ -46,7 +46,7 @@ def main() -> None:
     """1つの宿の空室検索の結果を表示する。"""
     ap = argparse.ArgumentParser()
     ap.add_argument("hotel_no")
-    ap.add_argument("--checkin", type=date.fromisoformat, default=next_saturday())
+    ap.add_argument("--checkin", type=date.fromisoformat, default=compare_dates()[0])
     ap.add_argument("--adults", type=int, default=2)
     ap.add_argument("--nights", type=int, default=1)
     args = ap.parse_args()

@@ -1,6 +1,7 @@
 """宿の市場価格（楽天トラベルの価格）を料金プランごとにまとめて取得し、market_prices と fetch_logs に保存する。
 
 使い方: python -m prices.update [--checkin 2026-11-21] [--dry-run]
+- 比べる日は、4週間後以降の最初の土曜。空室や条件に合う料金がなければ、さらに4週間後を試す（refresh.compare_dates）。--checkin を付けるとその日だけで取る
 - 宿（category=stay）で hotel_ref のある施設の料金プランが対象。人数・泊数・食事の条件はプランに合わせる
 - 楽天のアプリID・アクセスキーがなければ、全件を仮の価格（source='dummy'）で入れる
 - 取得した価格は、そのプランの「比べる日」の価格として保存する（is_representative=true。前の値はフラグを外して残す）
@@ -21,7 +22,7 @@ from typing import Any, Optional
 
 from models import Plan
 from prices.rakuten import Credentials, Fetched, NotAvailable, fetch_price
-from prices.refresh import next_saturday, plan_conditions, save_price
+from prices.refresh import compare_dates, plan_conditions, save_price
 
 ROOT = Path(__file__).resolve().parent.parent
 STOP_AFTER = 5
@@ -62,10 +63,27 @@ def fetch_with_retry(hotel_ref: str, plan: Plan, checkin: date, creds: Credentia
     return None, last
 
 
+def fetch_first_date(hotel_ref: str, plan: Plan, dates: list[date], creds: Credentials) -> tuple[Optional[Fetched], Optional[Exception], Optional[date]]:
+    """比べる日の候補を順に試し、価格が取れた最初の日の（価格, None, 日）を返す。取れなければ（None, 失敗の理由, None）。
+
+    空室なし・条件に合う料金なしなら次の日を試す。通信の失敗は次の日を試さない。
+    """
+    error: Optional[Exception] = None
+    for i, d in enumerate(dates):
+        if i:
+            time.sleep(INTERVAL_SEC)
+        fetched, error = fetch_with_retry(hotel_ref, plan, d, creds)
+        if fetched is not None:
+            return fetched, None, d
+        if not isinstance(error, NotAvailable):
+            break
+    return None, error, None
+
+
 def main() -> None:
     """宿の料金プランごとの市場価格を取得し、market_prices と fetch_logs に保存する。"""
     ap = argparse.ArgumentParser()
-    ap.add_argument("--checkin", type=date.fromisoformat, default=next_saturday())
+    ap.add_argument("--checkin", type=date.fromisoformat, help="この日だけで取る（付けなければ compare_dates の候補を順に試す）")
     ap.add_argument("--dry-run", action="store_true", help="表示するだけで、データベースには書かない")
     args = ap.parse_args()
 
@@ -75,6 +93,8 @@ def main() -> None:
     c = create_client(cfg["url"], cfg["key"]).schema("bts_app")
     creds: Credentials = cfg["creds"]
     print("楽天APIで取得します" if creds.ready() else "楽天のアプリID・アクセスキーがないため、仮の価格を入れます")
+    dates = [args.checkin] if args.checkin else compare_dates()
+    print("比べる日: " + " → ".join(f"{d:%m/%d}" for d in dates))
 
     # ② 対象（宿で hotel_ref のある施設の料金プラン）を読む
     menus = (c.table("menus").select("id,tenant_id,hotel_ref,name").eq("category", "stay")
@@ -95,14 +115,14 @@ def main() -> None:
     ok = ng = streak = 0
     stopped = False
     # 部屋のグレードは区別しないので、同じ宿・人数・泊数・食事の条件なら結果は同じ。楽天への問い合わせを1回にまとめる
-    cache: dict[tuple, tuple[Optional[Fetched], Optional[Exception]]] = {}
+    cache: dict[tuple, tuple[Optional[Fetched], Optional[Exception], Optional[date]]] = {}
     for p in plans:
         m = by_menu[p.menu_id]
         key = (m["hotel_ref"], *plan_conditions(p), p.meal)
         fresh = key not in cache
         if fresh:
-            cache[key] = fetch_with_retry(m["hotel_ref"], p, args.checkin, creds)
-        fetched, error = cache[key]
+            cache[key] = fetch_first_date(m["hotel_ref"], p, dates, creds)
+        fetched, error, checkin = cache[key]
         if fetched is None:
             ng += 1
             if not isinstance(error, NotAvailable):
@@ -115,10 +135,10 @@ def main() -> None:
             continue
         streak = 0
         ok += 1
-        print(f"  {m['name']}／{p.name}: {fetched.price:,}円（{fetched.source}）")
+        print(f"  {m['name']}／{p.name}: {fetched.price:,}円（{fetched.source}・{checkin:%m/%d}）")
         # ④ 比べる日の印を付け替えて保存する（前の値は残す）
         if not args.dry_run:
-            save_price(c.table, p, m["hotel_ref"], args.checkin, fetched, datetime.now(timezone.utc))
+            save_price(c.table, p, m["hotel_ref"], checkin, fetched, datetime.now(timezone.utc))
         if fresh and fetched.source == "rakuten_api":
             time.sleep(INTERVAL_SEC)
 
