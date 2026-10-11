@@ -22,6 +22,7 @@ from search import list_areas, search_menus
 from session import require_login
 from ui.day_plan import item_price_text, render_day_plan
 from ui.detail_page import open_detail
+from ui.home import render_home
 
 WEEKDAY_NAMES = ["月", "火", "水", "木", "金", "土", "日"]
 ALL = "すべて"
@@ -219,3 +220,6 @@ def render() -> None:
             _text_tab(user.tenant_id)
         with tab_condition:
             _condition_tab(user.tenant_id)
+    # 検索する前は、検索欄の下にお得ランキング・新着・最近の口コミを出す（どちらかのタブで検索したら消える）
+    if "search_text_result" not in st.session_state and "search_condition_result" not in st.session_state:
+        render_home(user)
