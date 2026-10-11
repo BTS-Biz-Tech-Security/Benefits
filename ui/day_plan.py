@@ -9,7 +9,8 @@ from typing import Optional
 
 import streamlit as st
 
-from day_plan import COMPARED_TO_LIST, COMPARED_TO_MARKET, KIND_LABELS, NIGHT, DayPlan, PlanItem
+from day_plan import KIND_LABELS, NIGHT, DayPlan, PlanItem
+from pricing import COMPARED_TO_LIST, COMPARED_TO_MARKET
 from ui.detail_page import open_detail
 
 
@@ -79,7 +80,7 @@ def render_day_plan(plan: DayPlan) -> None:
                 # 福利厚生の施設は、「詳細を見る」ボタンで詳細画面に移れる
                 if item.menu_id:
                     col_button.button("詳細を見る", key=f"day-plan-{plan.area_id}-{item.slot}-{item.menu_id}",
-                                      icon=":material/arrow_forward:", on_click=open_detail, args=(item.menu_id,))
+                                      icon=":material/arrow_forward:", on_click=open_detail, args=(item.menu_id, item.plan_id))
             elif item.kind == "spot":
                 col_name.markdown(name)
                 col_price.markdown(f":gray[{KIND_LABELS[item.kind]}]")

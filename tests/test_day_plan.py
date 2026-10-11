@@ -365,8 +365,7 @@ def test_benefit_item_with_allowance_shows_plan_within_limit():
     assert day_plan.benefit_item("夜", m, 10000).plan_name == "デラックス"
 
 
-# --- plan_saving（pricing.plan_saving ができるまでの仮の関数）と、市場価格との比較 ---
-# plan_saving の3つのテストは、tests/test_pricing.py に入る予定のもの（じゅんぺいさん作成）と同じ値にしてある
+# --- 市場価格との比較（plan_saving 自体のテストは tests/test_pricing.py） ---
 
 
 def plan_for_two(**kw) -> Plan:
@@ -380,23 +379,6 @@ def market_price(**kw) -> MarketPrice:
                 fetched_at=datetime(2026, 9, 22, 9, 0))
     base.update(kw)
     return MarketPrice(**base)
-
-
-def test_plan_saving_uses_market_price():
-    c = day_plan.plan_saving(plan_for_two(), market_price())  # 市場価格 26,000円・福利厚生 18,000円（2名分）
-    assert (c.benefit_price, c.compared_price, c.compared_to) == (9000, 13000, "市場価格")
-    assert c.saving == 4000 and c.saving_rate == 31
-
-
-def test_plan_saving_falls_back_to_list_price():
-    c = day_plan.plan_saving(plan_for_two(), None)  # 定価 30,000円・福利厚生 18,000円（2名分）
-    assert (c.benefit_price, c.compared_price, c.compared_to) == (9000, 15000, "定価")
-    assert c.saving == 6000 and c.saving_rate == 40
-
-
-def test_plan_saving_aligns_market_to_plan_people():
-    c = day_plan.plan_saving(plan_for_two(), market_price(adults=1, price=13000))  # 1名分の価格 → 2名分にそろえてから1人あたり
-    assert c.compared_price == 13000 and c.compared_to == "市場価格"
 
 
 def test_benefit_item_compares_with_market_price():
@@ -474,36 +456,30 @@ def test_best_saving_plan_mixes_market_and_list_price_per_plan():
     assert day_plan.best_saving_plan(stay).name == "素泊まり"
 
 
-def market_row(plan_id: str, menu_id: str = "s1", price: int = 26000) -> dict:
-    """market_prices の1行（DB から読んだ形）。"""
-    return {"menu_id": menu_id, "plan_id": plan_id, "checkin": "2026-10-10", "nights": 1, "adults": 2, "children": 0,
-            "meal": None, "price": price, "source": "dummy", "source_url": None, "fetched_at": "2026-10-10T09:00:00+00:00"}
-
-
-def test_load_market_prices_uses_plan_linked_prices(monkeypatch):
-    # 料金プランにひも付いた価格だけを、プランの id で返す。宿泊施設の料金プランだけを読みに行く
+def test_load_market_prices_reads_by_menu_ids(monkeypatch):
+    # 施設の id で pricing.representative_prices を呼び、その結果（料金プランの id → 市場価格）をそのまま返す
     room_only = Plan(id="p-room", menu_id="s1", name="素泊まり", list_price=20000, benefit_price=12000)
     two_meals = Plan(id="p-meals", menu_id="s1", name="2食付き", list_price=30000, benefit_price=24000)
     stay = Menu(id="s1", tenant_id="t", name="宿", category="stay", plans=[room_only, two_meals])
     meal = menu("m1", "meal", price=2400, list_price=3000)
     asked: list[list[str]] = []
 
-    def fake_rows(plan_ids):
-        asked.append(plan_ids)
-        return [market_row("p-room", price=16000)]  # 2食付きは取れなかった
+    def fake_prices(menu_ids):
+        asked.append(menu_ids)
+        return {"p-room": market_price(menu_id="s1", plan_id="p-room", price=16000)}  # 2食付きは取れなかった
 
-    monkeypatch.setattr(day_plan, "_read_plan_market_rows", fake_rows)
+    monkeypatch.setattr(day_plan, "representative_prices", fake_prices)
     markets = day_plan.load_market_prices([stay, meal])
-    assert asked == [["p-room", "p-meals"]]
+    assert asked == [["s1", "m1"]]
     assert list(markets) == ["p-room"] and markets["p-room"].price == 16000
 
 
 def test_load_market_prices_is_empty_when_reading_fails(monkeypatch):
     # plan_id の列がまだないときなど、読めなければ空（すべて定価と比べる）
-    def broken(plan_ids):
+    def broken(menu_ids):
         raise RuntimeError("column market_prices.plan_id does not exist")
 
-    monkeypatch.setattr(day_plan, "_read_plan_market_rows", broken)
+    monkeypatch.setattr(day_plan, "representative_prices", broken)
     assert day_plan.load_market_prices([menu("s1", "stay", price=10000)]) == {}
 
 
@@ -593,3 +569,18 @@ def test_ai_prompt_mentions_unmet_activities(monkeypatch):
     assert plan is not None
     day_plan._explain_with_ai(plan, "熱海でゴルフ三昧", "key")
     assert "見つからなかった希望：ゴルフ" in sent["prompt"]
+
+
+def test_benefit_item_remembers_proposed_plan_id():
+    # 「詳細を見る」で、提案した料金プランに印を付けるために id を持つ
+    stay = Menu(id="m1", tenant_id="t", name="宿", category="stay", plans=[plan_for_two()])
+    assert day_plan.benefit_item("夜", stay, None).plan_id == "p1"
+    assert day_plan.benefit_item("夜", menu("n1", "stay"), None).plan_id is None  # 料金プランのない施設
+
+
+def test_proposed_plan_comes_first_on_detail_page():
+    from ui.detail_page import proposed_first
+    plans = [Plan(id=f"p{i}", menu_id="m1", name=f"plan{i}", list_price=10000 * i, benefit_price=8000 * i) for i in (1, 2, 3)]
+    assert [p.id for p in proposed_first(plans, "p2")] == ["p2", "p1", "p3"]  # ほかは元の順（安い順）のまま
+    assert [p.id for p in proposed_first(plans, None)] == ["p1", "p2", "p3"]
+    assert [p.id for p in proposed_first(plans, "other")] == ["p1", "p2", "p3"]  # 別の施設の料金プランの id
