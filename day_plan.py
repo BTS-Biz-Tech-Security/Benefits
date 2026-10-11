@@ -13,10 +13,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
-from db import table
 from models import MarketPrice, Menu, Plan
 from nl_search import MODEL, llm_api_key
-from pricing import COMPARED_TO_MARKET, plan_saving
+from pricing import COMPARED_TO_MARKET, plan_saving, representative_prices
 from search import count_keyword_hits, list_areas, per_person
 from spots import spots_by_area
 
@@ -388,34 +387,15 @@ def _load_spots(tenant_id: str, area_id: str) -> list[Spot]:
     return spots
 
 
-def _read_plan_market_rows(plan_ids: list[str]) -> list[dict[str, Any]]:
-    """market_prices のうち、料金プランにひも付いた（plan_id が入った）代表値の行を読む。
-
-    TODO(pricing.py): 料金プランごとの市場価格を読む関数が pricing.py（じゅんぺいさん担当）にできたら、
-    この関数を消し、load_market_prices からそちらを呼ぶ。
-    """
-    if not plan_ids:
-        return []
-    query = table("market_prices").select("*").in_("plan_id", plan_ids).eq("is_representative", True)
-    return query.execute().data
-
-
 def load_market_prices(menus: list[Menu]) -> MarketsByPlan:
-    """料金プランごとの市場価格（料金プランの id → 価格）。宿泊施設の料金プランだけ。
+    """料金プランごとの市場価格（料金プランの id → 価格）。pricing.representative_prices で読む。
 
-    料金プランにひも付いた価格（plan_id が入った行）だけを使う。宿ごとの価格（plan_id が空の行）は、
-    どのプランの価格か分からないので使わない（1つの価格をすべてのプランと比べると、素泊まりばかり選ばれるため）。
-    ひも付いた価格がないプランや、読めなかったとき（plan_id の列がまだないときを含む）は、そのプランを定価と比べる。
+    読めなかったとき（plan_id の列がまだないときを含む）は空にし、すべてのプランを定価と比べる。
     """
-    plan_ids = [plan.id for menu in menus if menu.category == "stay" for plan in menu.plans]
     try:
-        rows = _read_plan_market_rows(plan_ids)
+        return representative_prices([menu.id for menu in menus])
     except Exception:  # 市場価格が読めなくても、定価と比べて組む
         return {}
-    markets: MarketsByPlan = {}
-    for row in rows:
-        markets[row["plan_id"]] = MarketPrice.from_row(row)
-    return markets
 
 
 def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget: Optional[int] = None,

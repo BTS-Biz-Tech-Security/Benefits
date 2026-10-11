@@ -456,36 +456,30 @@ def test_best_saving_plan_mixes_market_and_list_price_per_plan():
     assert day_plan.best_saving_plan(stay).name == "素泊まり"
 
 
-def market_row(plan_id: str, menu_id: str = "s1", price: int = 26000) -> dict:
-    """market_prices の1行（DB から読んだ形）。"""
-    return {"menu_id": menu_id, "plan_id": plan_id, "checkin": "2026-10-10", "nights": 1, "adults": 2, "children": 0,
-            "meal": None, "price": price, "source": "dummy", "source_url": None, "fetched_at": "2026-10-10T09:00:00+00:00"}
-
-
-def test_load_market_prices_uses_plan_linked_prices(monkeypatch):
-    # 料金プランにひも付いた価格だけを、プランの id で返す。宿泊施設の料金プランだけを読みに行く
+def test_load_market_prices_reads_by_menu_ids(monkeypatch):
+    # 施設の id で pricing.representative_prices を呼び、その結果（料金プランの id → 市場価格）をそのまま返す
     room_only = Plan(id="p-room", menu_id="s1", name="素泊まり", list_price=20000, benefit_price=12000)
     two_meals = Plan(id="p-meals", menu_id="s1", name="2食付き", list_price=30000, benefit_price=24000)
     stay = Menu(id="s1", tenant_id="t", name="宿", category="stay", plans=[room_only, two_meals])
     meal = menu("m1", "meal", price=2400, list_price=3000)
     asked: list[list[str]] = []
 
-    def fake_rows(plan_ids):
-        asked.append(plan_ids)
-        return [market_row("p-room", price=16000)]  # 2食付きは取れなかった
+    def fake_prices(menu_ids):
+        asked.append(menu_ids)
+        return {"p-room": market_price(menu_id="s1", plan_id="p-room", price=16000)}  # 2食付きは取れなかった
 
-    monkeypatch.setattr(day_plan, "_read_plan_market_rows", fake_rows)
+    monkeypatch.setattr(day_plan, "representative_prices", fake_prices)
     markets = day_plan.load_market_prices([stay, meal])
-    assert asked == [["p-room", "p-meals"]]
+    assert asked == [["s1", "m1"]]
     assert list(markets) == ["p-room"] and markets["p-room"].price == 16000
 
 
 def test_load_market_prices_is_empty_when_reading_fails(monkeypatch):
     # plan_id の列がまだないときなど、読めなければ空（すべて定価と比べる）
-    def broken(plan_ids):
+    def broken(menu_ids):
         raise RuntimeError("column market_prices.plan_id does not exist")
 
-    monkeypatch.setattr(day_plan, "_read_plan_market_rows", broken)
+    monkeypatch.setattr(day_plan, "representative_prices", broken)
     assert day_plan.load_market_prices([menu("s1", "stay", price=10000)]) == {}
 
 
