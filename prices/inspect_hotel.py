@@ -2,17 +2,18 @@
 
 使い方: python -m prices.inspect_hotel 84721 [--checkin 2026-11-14] [--adults 2] [--nights 1]
 - prices.update で「条件に合う料金が見つかりません」「空室がありません」が出たときに、原因を確かめるために使う
+- prices.update と同じ条件（宿泊プランごとの一覧・安い順の1ページ目）で呼ぶ
 - 部屋ごとに、プラン名・夕食と朝食の有無・合計料金を表示する。応答の件数の情報（pagingInfo）も表示する
 """
 from __future__ import annotations
 
 import argparse
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 import requests
 
-from prices.rakuten import API_URL, TIMEOUT, hotel_parts, request_headers
+from prices.rakuten import API_URL, TIMEOUT, hotel_parts, request_headers, vacant_params
 from prices.refresh import next_saturday
 
 
@@ -55,10 +56,7 @@ def main() -> None:
     if not creds.ready():
         print("楽天のアプリID・アクセスキーがありません（secrets.toml の [rakuten] に書く）")
         return
-    params = {"applicationId": creds.application_id, "format": "json", "hotelNo": args.hotel_no,
-              "checkinDate": args.checkin.isoformat(),
-              "checkoutDate": (args.checkin + timedelta(days=args.nights)).isoformat(),
-              "adultNum": args.adults, "responseType": "small"}
+    params = vacant_params(args.hotel_no, args.checkin, args.nights, args.adults, creds)  # prices.update と同じ条件（1ページ目）
     r = requests.get(API_URL, params=params, headers=request_headers(creds), timeout=TIMEOUT)
     print(f"HTTP {r.status_code}　{args.hotel_no}　{args.checkin}〜{args.nights}泊　大人{args.adults}名")
     if r.status_code != 200:

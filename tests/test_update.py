@@ -35,3 +35,16 @@ def test_fetch_with_retry_uses_plan_conditions(monkeypatch):
     fetched, error = update.fetch_with_retry("12345", plan, date(2026, 10, 17), Credentials())
     assert fetched.price == 26000 and error is None
     assert calls == [("12345", 2, 3, 30000, "2食付き")]
+
+
+def test_not_available_is_not_retried(monkeypatch):
+    from prices.rakuten import NotAvailable
+    calls = []
+
+    def fake(*args, **kwargs):
+        calls.append(1)
+        raise NotAvailable("空室がありません")
+    monkeypatch.setattr(update, "fetch_price", fake)
+    plan = Plan(id="p", menu_id="m", name="素泊まり", list_price=10000, benefit_price=6000, nights=1, adults=2, meal="なし")
+    fetched, error = update.fetch_with_retry("12345", plan, date(2026, 10, 17), Credentials("a", "k"))
+    assert fetched is None and str(error) == "空室がありません" and calls == [1]

@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from models import Plan
-from prices.rakuten import Credentials, Fetched, fetch_price
+from prices.rakuten import Credentials, Fetched, NotAvailable, fetch_price
 from prices.refresh import next_saturday, plan_conditions, save_price
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,13 +45,18 @@ def load_config() -> dict[str, Any]:
 
 
 def fetch_with_retry(hotel_ref: str, plan: Plan, checkin: date, creds: Credentials) -> tuple[Optional[Fetched], Optional[Exception]]:
-    """1プラン分を取得する。失敗したら RETRY 回まで間をあけて取り直す。仮の価格の元にはプランの定価を使う。"""
+    """1プラン分を取得する。通信の失敗は RETRY 回まで間をあけて取り直す。仮の価格の元にはプランの定価を使う。
+
+    空室なし・条件に合う料金なし（NotAvailable）は、取り直しても変わらないので1回で失敗にする。
+    """
     nights, adults, _ = plan_conditions(plan)
     last: Optional[Exception] = None
     for _ in range(RETRY + 1):
         try:
             return fetch_price(hotel_ref, checkin, nights, adults, creds, plan.list_price, meal=plan.meal), None
-        except Exception as e:  # 通信の失敗も空室なしも、取り直してだめなら失敗として数える
+        except NotAvailable as e:
+            return None, e
+        except Exception as e:  # 通信の失敗は、取り直してだめなら失敗として数える
             last = e
             time.sleep(INTERVAL_SEC)
     return None, last
@@ -80,6 +85,7 @@ def main() -> None:
     by_menu = {m["id"]: m for m in menus}
     plans = [Plan.from_row(r) for r in c.table("plans").select("*").in_("menu_id", list(by_menu))
              .is_("deleted_at", "null").execute().data]
+    plans.sort(key=lambda p: (by_menu[p.menu_id]["name"], p.name))  # 結果を読みやすいよう、宿名・プラン名の順に並べる
     log = None
     if not args.dry_run:
         log = c.table("fetch_logs").insert({"tenant_id": menus[0]["tenant_id"], "started_at": datetime.now(timezone.utc).isoformat(),
