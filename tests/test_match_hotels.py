@@ -105,3 +105,18 @@ def test_name_check_ignores_width_and_spaces():
     res = mh.match_menu({"id": "m1", "name": "JRタワーホテル日航札幌", "address": "北海道札幌市中央区"}, CREDS,
                         fake_get({"JRタワーホテル日航札幌": data}), sleep=lambda s: None)
     assert (res.status, res.hotel_no) == (mh.MATCHED, "7")
+
+
+def test_candidate_keeps_rakuten_rating():
+    data = {"hotels": [{"hotel": [{"hotelBasicInfo": {"hotelNo": 1234, "hotelName": "天成園", "address1": "神奈川県",
+                                                      "address2": "足柄下郡箱根町", "reviewAverage": 4.36, "reviewCount": 2150}}]}]}
+    c = mh.parse_candidates(data)[0]
+    assert (c.rating, c.review_count) == (4.4, 2150)
+    assert mh.menu_update(c) == {"hotel_ref": "1234", "matched": True, "external_rating": 4.4,
+                                 "external_review_count": 2150, "external_rating_source": "rakuten_api"}
+
+
+def test_no_rating_writes_only_hotel_number():
+    c = mh.Candidate("1234", "天成園", "神奈川県足柄下郡箱根町", rating=mh.to_rating(None), review_count=mh.to_count(None))
+    assert mh.menu_update(c) == {"hotel_ref": "1234", "matched": True}
+    assert mh.to_rating("0") is None and mh.to_rating("abc") is None and mh.to_rating(5.0) == 5.0

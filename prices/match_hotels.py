@@ -4,7 +4,7 @@
 - 対象は、宿（category=stay）のうち hotel_ref が楽天のホテル番号（数字）でないもの
 - 施設名で楽天のキーワード検索APIを呼び、住所（都道府県と市区町村）が同じで、名前に施設名の最後の語を含む候補を探す
 - 条件に合う候補が1件だけなら「一致」、それ以外は「要確認」（候補を表示するだけで書き込まない）
-- --apply を付けたときだけ、「一致」の宿の hotel_ref を書き換える。付けなければ結果を表示するだけ
+- --apply を付けたときだけ、「一致」の宿の hotel_ref と、楽天の星の評価・口コミ件数（external_rating 等）を書き換える。付けなければ結果を表示するだけ
 - 楽天のアプリID・アクセスキーがなければ何もしない
 - 照合したあとは python -m prices.update で、本物の市場価格を取り直す
 """
@@ -37,6 +37,8 @@ class Candidate:
     hotel_no: str
     name: str
     address: str
+    rating: Optional[float] = None  # 楽天の星の平均（reviewAverage）。口コミがない宿は None
+    review_count: Optional[int] = None  # 楽天の口コミ件数（reviewCount）
 
 
 @dataclass
@@ -74,8 +76,36 @@ def parse_candidates(data: dict[str, Any]) -> list[Candidate]:
         if not info or info.get("hotelNo") is None:
             continue
         out.append(Candidate(str(info["hotelNo"]), info.get("hotelName", ""),
-                             f"{info.get('address1', '')}{info.get('address2', '')}"))
+                             f"{info.get('address1', '')}{info.get('address2', '')}",
+                             to_rating(info.get("reviewAverage")), to_count(info.get("reviewCount"))))
     return out
+
+
+def to_rating(value: Any) -> Optional[float]:
+    """楽天の星の平均を、0〜5 の小数1桁にする。値がない・数でない・範囲外なら None。"""
+    try:
+        rating = round(float(value), 1)
+    except (TypeError, ValueError):
+        return None
+    return rating if 0 < rating <= 5 else None
+
+
+def to_count(value: Any) -> Optional[int]:
+    """楽天の口コミ件数を整数にする。値がない・数でない・マイナスなら None。"""
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        return None
+    return count if count >= 0 else None
+
+
+def menu_update(candidate: Candidate) -> dict[str, Any]:
+    """一致した宿に書き込む値。楽天のホテル番号と、星の評価・口コミ件数（取れたときだけ）。"""
+    row: dict[str, Any] = {"hotel_ref": candidate.hotel_no, "matched": True}
+    if candidate.rating is not None:
+        row.update({"external_rating": candidate.rating, "external_review_count": candidate.review_count or 0,
+                    "external_rating_source": "rakuten_api"})
+    return row
 
 
 def search_keywords(name: str) -> list[str]:
@@ -168,9 +198,10 @@ def main() -> None:
         counts[res.status] += 1
         if res.status == MATCHED:
             hit = next(x for x in res.candidates if x.hotel_no == res.hotel_no)
-            print(f"  {res.status}　{res.menu_name} → {hit.name}（{res.hotel_no}・{hit.address}）")
+            rating = f"　★{hit.rating}（{hit.review_count or 0:,}件）" if hit.rating is not None else ""
+            print(f"  {res.status}　{res.menu_name} → {hit.name}（{res.hotel_no}・{hit.address}）{rating}")
             if args.apply:
-                c.table("menus").update({"hotel_ref": res.hotel_no, "matched": True}).eq("id", res.menu_id).execute()
+                c.table("menus").update(menu_update(hit)).eq("id", res.menu_id).execute()
         else:
             print(f"  {res.status}　{res.menu_name}（{m.get('address') or '住所なし'}）")
             for x in res.candidates[:5]:
