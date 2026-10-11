@@ -10,7 +10,8 @@ from typing import Optional
 
 import streamlit as st
 
-from day_plan import load_market_prices, plan_saving
+from day_plan import load_market_prices
+from pricing import plan_saving
 from models import CATEGORIES, Menu, Plan, User
 from search import get_menu
 from session import require_login

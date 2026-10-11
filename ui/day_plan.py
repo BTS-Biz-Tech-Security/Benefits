@@ -9,7 +9,8 @@ from typing import Optional
 
 import streamlit as st
 
-from day_plan import COMPARED_TO_LIST, COMPARED_TO_MARKET, KIND_LABELS, NIGHT, DayPlan, PlanItem
+from day_plan import KIND_LABELS, NIGHT, DayPlan, PlanItem
+from pricing import COMPARED_TO_LIST, COMPARED_TO_MARKET
 from ui.detail_page import open_detail
 
 
