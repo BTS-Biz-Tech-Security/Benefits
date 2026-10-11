@@ -64,3 +64,28 @@ def test_fetch_first_date_moves_to_next_date(monkeypatch):
     plan = Plan(id="p", menu_id="m", name="素泊まり", list_price=10000, benefit_price=6000, nights=1, adults=2, meal="なし")
     fetched, error, day = update.fetch_first_date("1", plan, [date(2026, 11, 14), date(2026, 12, 12)], Credentials("a", "k"))
     assert (fetched.price, error, day) == (30000, None, date(2026, 12, 12))
+
+
+def test_db_write_is_retried_when_disconnected(monkeypatch):
+    monkeypatch.setattr(update.time, "sleep", lambda s: None)
+    calls = []
+
+    def write():
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("Server disconnected")
+        return "ok"
+    assert update.with_db_retry(write) == "ok" and len(calls) == 2
+
+
+def test_db_write_gives_up_after_retries(monkeypatch):
+    import pytest
+    monkeypatch.setattr(update.time, "sleep", lambda s: None)
+    calls = []
+
+    def write():
+        calls.append(1)
+        raise RuntimeError("Server disconnected")
+    with pytest.raises(RuntimeError):
+        update.with_db_retry(write)
+    assert len(calls) == update.DB_RETRY + 1

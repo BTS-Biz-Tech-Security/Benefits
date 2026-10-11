@@ -18,7 +18,7 @@ import time
 import tomllib
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from models import Plan
 from prices.rakuten import Credentials, Fetched, NotAvailable, fetch_price
@@ -27,6 +27,7 @@ from prices.refresh import compare_dates, plan_conditions, save_price
 ROOT = Path(__file__).resolve().parent.parent
 STOP_AFTER = 5
 RETRY = 2
+DB_RETRY = 2  # データベースへの書き込みを取り直す回数
 INTERVAL_SEC = 1.0  # 楽天への問い合わせの間隔（続けて呼ぶと一時的に止められるため）
 
 
@@ -61,6 +62,21 @@ def fetch_with_retry(hotel_ref: str, plan: Plan, checkin: date, creds: Credentia
             last = e
             time.sleep(INTERVAL_SEC)
     return None, last
+
+
+def with_db_retry(write: Callable[[], Any], tries: int = DB_RETRY + 1) -> Any:
+    """データベースへの書き込みを、接続が切れたときは間をあけて取り直す。
+
+    Supabase との接続は、長く動かしていると相手から切られることがある（Server disconnected）。
+    書き込みは同じ値の上書きなので、繰り返しても結果は変わらない。
+    """
+    for i in range(tries):
+        try:
+            return write()
+        except Exception:
+            if i == tries - 1:
+                raise
+            time.sleep(INTERVAL_SEC * (i + 1))
 
 
 def fetch_first_date(hotel_ref: str, plan: Plan, dates: list[date], creds: Credentials) -> tuple[Optional[Fetched], Optional[Exception], Optional[date]]:
@@ -138,14 +154,14 @@ def main() -> None:
         print(f"  {m['name']}／{p.name}: {fetched.price:,}円（{fetched.source}・{checkin:%m/%d}）")
         # ④ 比べる日の印を付け替えて保存する（前の値は残す）
         if not args.dry_run:
-            save_price(c.table, p, m["hotel_ref"], checkin, fetched, datetime.now(timezone.utc))
+            with_db_retry(lambda: save_price(c.table, p, m["hotel_ref"], checkin, fetched, datetime.now(timezone.utc)))
         if fresh and fetched.source == "rakuten_api":
             time.sleep(INTERVAL_SEC)
 
     # ⑤ 取得の記録を締める
     if log:
-        c.table("fetch_logs").update({"finished_at": datetime.now(timezone.utc).isoformat(), "success_count": ok,
-                                      "fail_count": ng, "stopped": stopped}).eq("id", log["id"]).execute()
+        with_db_retry(lambda: c.table("fetch_logs").update({"finished_at": datetime.now(timezone.utc).isoformat(), "success_count": ok,
+                                                            "fail_count": ng, "stopped": stopped}).eq("id", log["id"]).execute())
     print(f"完了: 成功 {ok} / 失敗 {ng} / 停止 {'あり' if stopped else 'なし'}" + ("（表示のみ）" if args.dry_run else ""))
 
 
