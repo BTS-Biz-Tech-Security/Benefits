@@ -72,7 +72,7 @@ def render_results(menus: list[Menu], key: str, *, budget: Optional[int] = None,
     for _, m, r in items:
         with st.container(border=True):
             c0, c1, c2 = st.columns([1, 3, 1])
-            c0.image(image_url(m.photo_url, m.name, m.category, width=200, height=120), use_container_width=True)
+            c0.image(image_url(m.photo_url, m.name, m.category, width=200, height=120), width="stretch")
             cat_icon = {"stay": ":material/bed:", "meal": ":material/restaurant:", "leisure": ":material/attractions:"}.get(m.category, "")
             cat_color = {"stay": "violet", "meal": "orange", "leisure": "green"}.get(m.category, "gray")
             badges = f":{cat_color}-badge[{cat_icon} {CATEGORIES.get(m.category, m.category)}]"

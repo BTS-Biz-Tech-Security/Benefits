@@ -148,7 +148,7 @@ def _render_crawl() -> None:
     st.button("今すぐ取得する（開発予定）", icon=":material/sync:", disabled=True)
     # ② 取得の履歴（見本）
     st.markdown("**取得の履歴**　:gray[（表示は見本です）]")
-    st.dataframe(CRAWL_HISTORY_SAMPLE, hide_index=True, use_container_width=True)
+    st.dataframe(CRAWL_HISTORY_SAMPLE, hide_index=True, width="stretch")
 
 
 def _render_import(user: User) -> None:

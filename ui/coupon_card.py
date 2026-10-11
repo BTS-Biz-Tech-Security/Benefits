@@ -20,7 +20,7 @@ def render_coupon_card(user: User, menu: Menu, plan: Plan) -> None:
         b1, b2 = st.columns([1, 1])
         if not st.session_state.get(f"opened-{plan.id}"):
             # ② 使ったこと・予約ページへ進んだことを1回の操作で記録する
-            if b1.button("クーポンを使って予約する", key=f"cp-{plan.id}", type="primary", icon=":material/confirmation_number:", use_container_width=True):
+            if b1.button("クーポンを使って予約する", key=f"cp-{plan.id}", type="primary", icon=":material/confirmation_number:", width="stretch"):
                 acquire(user, plan)
                 if plan.member_url:
                     member_link(user, plan)
@@ -29,7 +29,7 @@ def render_coupon_card(user: User, menu: Menu, plan: Plan) -> None:
         else:
             # ③ 押したあとは同じ位置に予約ページと口コミの入口
             if plan.member_url:
-                b1.link_button("予約ページを開く", plan.member_url, type="primary", icon=":material/open_in_new:", use_container_width=True)
-            if b2.button("口コミを書く", key=f"post-{plan.id}", icon=":material/rate_review:", use_container_width=True):
+                b1.link_button("予約ページを開く", plan.member_url, type="primary", icon=":material/open_in_new:", width="stretch")
+            if b2.button("口コミを書く", key=f"post-{plan.id}", icon=":material/rate_review:", width="stretch"):
                 open_post_dialog(user, menu, plan)
             st.caption("コードは予約ページで入力してください。「クーポン使用履歴」からいつでも見られます")
