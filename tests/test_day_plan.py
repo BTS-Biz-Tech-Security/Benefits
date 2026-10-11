@@ -593,3 +593,18 @@ def test_ai_prompt_mentions_unmet_activities(monkeypatch):
     assert plan is not None
     day_plan._explain_with_ai(plan, "熱海でゴルフ三昧", "key")
     assert "見つからなかった希望：ゴルフ" in sent["prompt"]
+
+
+def test_benefit_item_remembers_proposed_plan_id():
+    # 「詳細を見る」で、提案した料金プランに印を付けるために id を持つ
+    stay = Menu(id="m1", tenant_id="t", name="宿", category="stay", plans=[plan_for_two()])
+    assert day_plan.benefit_item("夜", stay, None).plan_id == "p1"
+    assert day_plan.benefit_item("夜", menu("n1", "stay"), None).plan_id is None  # 料金プランのない施設
+
+
+def test_proposed_plan_comes_first_on_detail_page():
+    from ui.detail_page import proposed_first
+    plans = [Plan(id=f"p{i}", menu_id="m1", name=f"plan{i}", list_price=10000 * i, benefit_price=8000 * i) for i in (1, 2, 3)]
+    assert [p.id for p in proposed_first(plans, "p2")] == ["p2", "p1", "p3"]  # ほかは元の順（安い順）のまま
+    assert [p.id for p in proposed_first(plans, None)] == ["p1", "p2", "p3"]
+    assert [p.id for p in proposed_first(plans, "other")] == ["p1", "p2", "p3"]  # 別の施設の料金プランの id

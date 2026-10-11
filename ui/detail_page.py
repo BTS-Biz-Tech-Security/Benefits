@@ -1,14 +1,17 @@
 """詳細画面。施設の見出しと、3つのタブ（プラン・条件／口コミ／周辺）を持つ。
 
-検索結果や1日プランで施設名を押すと、open_detail() で施設を覚えて、この画面に移る。
+検索結果や1日プランで施設名を押すと、open_detail() で施設（と提案した料金プラン）を覚えて、この画面に移る。
+提案した料金プランは、プラン・条件タブのいちばん上に「提案中のプラン」の印を付けて出す。
 各タブの中身は担当ごとのファイルが描く。クーポンのカードは、プラン・条件タブの各料金プランの下に出す。
 """
 from __future__ import annotations
 
+from typing import Optional
+
 import streamlit as st
 
 from day_plan import load_market_prices, plan_saving
-from models import CATEGORIES, Menu, User
+from models import CATEGORIES, Menu, Plan, User
 from search import get_menu
 from session import require_login
 from ui.coupon_card import render_coupon_card
@@ -23,9 +26,10 @@ CATEGORY_BADGES = {
 }
 
 
-def open_detail(menu_id: str) -> None:
-    """施設を覚えて、詳細画面に移る。ボタンの on_click に渡して使う。"""
+def open_detail(menu_id: str, plan_id: Optional[str] = None) -> None:
+    """施設と、提案した料金プラン（あれば）を覚えて、詳細画面に移る。ボタンの on_click に渡して使う。"""
     st.session_state["menu_id"] = menu_id
+    st.session_state["plan_id"] = plan_id
     st.session_state["page"] = "detail"
 
 
@@ -62,23 +66,32 @@ def render() -> None:
     tab_plans, tab_reviews, tab_spots = st.tabs(
         [":material/bed: プラン・条件", ":material/reviews: 口コミ", ":material/map: 周辺"])
     with tab_plans:
-        _render_plans_and_conditions(user, menu)
+        _render_plans_and_conditions(user, menu, st.session_state.get("plan_id"))
     with tab_reviews:
         render_review_tab(user, menu)
     with tab_spots:
         render_spots_tab(user, menu)
 
 
-def _render_plans_and_conditions(user: User, menu: Menu) -> None:
-    """プラン・条件タブ。料金プランごとの内容と金額（クーポンがあればその下にカード）、施設の利用条件を並べる。"""
-    # ① 料金プラン（福利厚生価格の安い順）
+def proposed_first(plans: list[Plan], proposed_plan_id: Optional[str]) -> list[Plan]:
+    """提案した料金プランをいちばん上に移す。ほかの料金プランは元の順（福利厚生価格の安い順）のまま。
+    提案した料金プランがない（id が None か、この施設の料金プランにない）ときは、元の順のまま。"""
+    proposed = [plan for plan in plans if plan.id == proposed_plan_id]
+    return proposed + [plan for plan in plans if plan.id != proposed_plan_id]
+
+
+def _render_plans_and_conditions(user: User, menu: Menu, proposed_plan_id: Optional[str] = None) -> None:
+    """プラン・条件タブ。料金プランごとの内容と金額（クーポンがあればその下にカード）、施設の利用条件を並べる。
+    proposed_plan_id（1日プランや施設一覧で提案した料金プラン）があれば、いちばん上に印を付けて出す。"""
+    # ① 料金プラン（提案した料金プランが先頭、ほかは福利厚生価格の安い順）
     st.markdown("**料金プラン**")
     if not menu.plans:
         st.caption("料金プランは登録されていません。")
     markets = load_market_prices([menu])  # 料金プランの id → 市場価格（取れたプランだけ）
-    for plan in menu.plans:
+    for plan in proposed_first(menu.plans, proposed_plan_id):
         with st.container(border=True):
-            st.markdown(f"**{plan.name}**")
+            badge = "　:green-badge[:material/recommend: 提案中のプラン]" if plan.id == proposed_plan_id else ""
+            st.markdown(f"**{plan.name}**{badge}")
             details = [f"部屋 {plan.room_type or '—'}", f"食事 {plan.meal or '—'}", f"{plan.adults or 1}名・{plan.nights}泊の料金"]
             st.caption(" ／ ".join(details))
             # 1日プランや一覧と同じ見せ方（1人あたりの金額と、料金プランに書かれた金額）
