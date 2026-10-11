@@ -1,7 +1,7 @@
 from datetime import date, datetime
 
 from models import MarketPrice, Plan
-from pricing import GOOD, NO_DATA, NOT_GOOD, best_result, evaluate, normalize
+from pricing import best_plan_saving, normalize, plan_saving
 
 
 def plan(**kw):
@@ -16,20 +16,6 @@ def market(**kw):
     return MarketPrice(**base)
 
 
-def test_good():
-    r = evaluate(plan(), market())
-    assert r.judgement == GOOD and r.diff == 8000 and not r.reference
-
-
-def test_not_good():
-    r = evaluate(plan(benefit_price=27000), market())
-    assert r.judgement == NOT_GOOD and r.diff == -1000
-
-
-def test_no_data():
-    r = evaluate(plan(), None)
-    assert r.judgement == NO_DATA and r.market_price is None and r.diff is None
-
 
 def test_normalize_adults():
     price, ref = normalize(market(adults=1, price=13000), plan(adults=2))
@@ -41,12 +27,26 @@ def test_normalize_nights():
     assert price == 26000 and ref
 
 
-def test_best_result_picks_max_diff():
+def test_plan_saving_uses_market_price():
+    s = plan_saving(plan(), market())  # 市場価格 26,000円・福利厚生 18,000円（2名分）
+    assert (s.benefit_price, s.compared_price, s.compared_to, s.saving, s.saving_rate) == (9000, 13000, "市場価格", 4000, 31)
+
+
+def test_plan_saving_falls_back_to_list_price():
+    s = plan_saving(plan(), None)  # 定価 30,000円・福利厚生 18,000円（2名分）
+    assert (s.benefit_price, s.compared_price, s.compared_to, s.saving, s.saving_rate) == (9000, 15000, "定価", 6000, 40)
+
+
+def test_plan_saving_aligns_market_to_plan_people():
+    s = plan_saving(plan(), market(adults=1, price=13000))  # 1名分の市場価格 → 2名分にそろえてから1人あたり
+    assert s.compared_price == 13000 and s.compared_to == "市場価格"
+
+
+def test_best_plan_saving_picks_max_saving():
     plans = [plan(id="a", benefit_price=20000), plan(id="b", benefit_price=15000)]
-    r = best_result(plans, market())
-    assert r.benefit_price == 15000 and r.diff == 11000
-
-
-def test_label():
-    assert evaluate(plan(), market()).label == "お得"
-    assert evaluate(plan(), market(adults=1, price=13000)).label == "お得（目安）"
+    markets = {"a": market(), "b": market()}
+    s = best_plan_saving(plans, markets)  # 1人あたりのお得額は 3,000円と 5,500円
+    assert s.benefit_price == 7500 and s.saving == 5500
+    assert best_plan_saving([], markets) is None
+    # 市場価格のないプランは定価と比べる
+    assert best_plan_saving(plans, {}).compared_to == "定価"
