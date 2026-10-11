@@ -64,7 +64,7 @@ def render_results(menus: list[Menu], key: str) -> None:
             if m.external_rating is not None:
                 c1.caption(f"外部サイトの評価 ★{m.external_rating}（{m.external_review_count or 0:,}件）")
             if r is not None:
-                c1.markdown(price_text(r.compared_price, r.benefit_price, r.saving, r.saving_rate, r.compared_to))
+                c1.markdown(price_text(r.benefit_price, r.compared_price, r.saving, r.saving_rate, r.compared_to))
             else:
                 c1.markdown(":gray[価格未登録]")
             if c2.button("詳細を見る", key=f"{key}-detail-{m.id}", icon=":material/arrow_forward:"):
