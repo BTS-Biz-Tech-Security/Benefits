@@ -10,6 +10,7 @@ Step2-2 Webアプリ
 - サイドバーの「開発用: 利用者を選ぶ」で見本の利用者を選ぶと、ログインした状態で画面を確かめられる（人事の画面は山本さんを選ぶ）。パスワードを確かめない開発用の仕組みなので、本番運用では app.py から外す
 - AIを使う機能（文章からの条件読み取り・意味の近さで探す・1日プランの説明）は、secrets.toml の `[llm]` に `api_key` があるときだけ動く。なければ簡易なルールと完全一致で動く
 - 市場価格（楽天トラベルの価格）は market_prices に料金プランごとに入れる（人数・泊数・食事の条件をプランに合わせる。sql/009）。検索のたびに、取得してから6時間以上たったプランを最大5件まで楽天から取り直し、DBの値と違えば上書きする（prices/refresh.py）。secrets.toml の `[rakuten]` に `application_id` と `access_key`（許可Webサイトを登録した場合は `referer` も）がなければ取り直さず、DBの値をそのまま使う。楽天のキーはチャットに貼らない
+- 宿を楽天の施設と照合するときは `python -m prices.match_hotels`（結果の表示だけ。`--apply` を付けると、住所と名前が合う候補が1件だけの宿の hotel_ref を楽天のホテル番号に書き換える）。照合のあとに下の `prices.update` を動かすと、本物の市場価格が入る。楽天のキーが必要
 - まとめて入れるときは `python -m prices.update`（`--dry-run` を付けると表示だけ）。楽天のキーがなければ仮の価格（source が dummy）を入れる
 - 意味の近さで探すには、`sql/004_search.sql` を実行し、`python -m seed.embed_menus` で施設のベクトルを入れておく
 
@@ -18,7 +19,7 @@ Step2-2 Webアプリ
 |---|---|
 | のむりん（自然言語検索・絞り込み・ログイン） | search.py, nl_search.py, embedding.py, seed/embed_menus.py, day_plan.py, auth.py, ui/login_form.py, ui/search_page.py, ui/day_plan.py, ui/admin_page.py, ui/detail_page.py |
 | じゅんぺい（差額計算・ランキング表示） | pricing.py, ranking.py, placeholder.py, ui/home.py, ui/results_page.py, ui/price_tab.py |
-| なかりん（従業員投稿入力・保存） | posts.py, coupon.py, activity.py, spots.py, menu_import.py, prices/rakuten.py, prices/update.py, prices/refresh.py, prices/crawl_spots.py, prices/crawl_targets.csv, dialogs/post.py, ui/review_tab.py, ui/coupon_card.py, ui/spots_tab.py, ui/mypage.py |
+| なかりん（従業員投稿入力・保存） | posts.py, coupon.py, activity.py, spots.py, menu_import.py, prices/rakuten.py, prices/update.py, prices/refresh.py, prices/match_hotels.py, prices/crawl_spots.py, prices/crawl_targets.csv, dialogs/post.py, ui/review_tab.py, ui/coupon_card.py, ui/spots_tab.py, ui/mypage.py |
 | 共通 | app.py, db.py, models.py, session.py, seed/（embed_menus.py を除く）, sql/, assets/, requirements.txt, .gitignore, .gitattributes, .streamlit/config.toml, README.md |
 
 ## データの取り出し方（Supabase）
