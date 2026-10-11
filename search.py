@@ -62,14 +62,15 @@ def min_benefit_price(menu: Menu) -> Optional[int]:
 def filter_menus(menus: list[Menu], *, people: Optional[int] = None, budget: Optional[int] = None,
                  keywords: Iterable[str] = (), budget_categories: Iterable[str] = ("stay",),
                  area_names: Optional[dict[str, str]] = None, budget_allowance: float = 1.0) -> list[Menu]:
-    """人数・予算・キーワードで絞り込み、並べ替えて返す。
+    """人数・予算・キーワードで絞り込んで返す。並び順は変えない（並べ替えは ranking.py の役割）。
 
     - 人数: 定員（max_people）が人数以上、または定員が未設定の施設
     - 予算: 1人あたりの上限。budget_categories のカテゴリの施設だけに当てはめ、1人あたりの金額が予算以下のプランがない施設は外す。
       既定は宿だけ（1日プラン提案の「宿代の予算」）。施設を検索タブでは、選んだカテゴリ（「すべて」なら全カテゴリ）を渡す。
       budget_allowance は、予算の何倍まで残すか。既定は1倍（予算ちょうどまで）。1日プラン提案では、予算を超えてもお得な宿を
       見せるために 1.5倍まで残す（超える額は「予算＋〇〇円」のバッジで示す）
-    - キーワード: 1つ以上含む施設。含む数の多い順、同数なら安い順。area_names を渡すと、エリア名も照合に使う
+    - キーワード: 1つ以上含む施設。含む数は menu.keyword_hits に入れる（ranking.py の条件への適合度で使う）。
+      area_names を渡すと、エリア名も照合に使う
     """
     keywords = [k for k in keywords if k]
     result: list[Menu] = []
@@ -88,16 +89,7 @@ def filter_menus(menus: list[Menu], *, people: Optional[int] = None, budget: Opt
             if menu.keyword_hits == 0:
                 continue
         result.append(menu)
-
-    # TODO(ranking.py): ここから下の並べ替えは仮のもの。並び順は ranking.py（じゅんぺいさん担当）が決める役割なので、
-    # ranking.py ができたら外し、絞り込んだ result をそのまま返す。
-    # 並びが変わっても day_plan.py は受け取った順番に従うので、day_plan.py の変更は要らない。
-    def sort_key(menu: Menu) -> tuple[int, bool, int, str]:
-        # キーワードを多く含む順 → 価格のある施設が先 → 安い順 → 名前順
-        price = min_benefit_price(menu)
-        return (-menu.keyword_hits, price is None, price or 0, menu.name)
-
-    return sorted(result, key=sort_key)
+    return result
 
 
 def fetch_menus(tenant_id: str, *, area_code: Optional[str] = None, category: Optional[str] = None) -> list[Menu]:

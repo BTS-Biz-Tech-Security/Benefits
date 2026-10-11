@@ -3,7 +3,7 @@
 - 「1日プラン提案」（_text_tab）: 休日プランの文章から条件を読み取って検索し、エリアごとの1日プランを提案する
 - 「施設を検索」（_condition_tab）: エリア・カテゴリ・人数・予算（選んだカテゴリの1人あたり）で検索し、施設の一覧だけを出す（1日プランは組まない）
 
-読み取りは nl_search.py、施設の検索は search.py、1日プランの組み立ては day_plan.py に任せ、ここは入力と表示だけを持つ。
+読み取りは nl_search.py、施設の検索は search.py、並べ替えは ranking.py、1日プランの組み立ては day_plan.py に任せ、ここは入力と表示だけを持つ。
 """
 from __future__ import annotations
 
@@ -17,10 +17,12 @@ from day_plan import (BUDGET_ALLOWANCE, DayPlan, MarketsByPlan, activity_keyword
                       make_day_plans)
 from models import CATEGORIES, Menu
 from nl_search import SEARCH_FOCUS_OPTIONS, ai_available, parse_plan
+from ranking import facility_scores, plan_weights, rank_menus, rank_plans
 from search import list_areas, search_menus
 from session import require_login
 from ui.day_plan import item_price_text, render_day_plan
 from ui.detail_page import open_detail
+from ui.home import render_home
 
 WEEKDAY_NAMES = ["月", "火", "水", "木", "金", "土", "日"]
 ALL = "すべて"
@@ -132,11 +134,16 @@ def _text_tab(tenant_id: str) -> None:
                     # 宿は予算の1.5倍（BUDGET_ALLOWANCE）まで残し、超える額はバッジで示す。「施設を検索」タブは予算ちょうどまで
                     menus = search_menus(tenant_id, people=conditions["people"], budget=conditions["budget"], keywords=words,
                                          budget_allowance=BUDGET_ALLOWANCE)
+                    # 施設を ranking.py の共通スコア（重みは文章から決める）の高い順に並べる。1日プランはこの順で施設を選ぶ
+                    scores = facility_scores(menus, words, plan_weights(plan_text))
+                    menus = rank_menus(menus, scores)
                     # お得額は、市場価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
                     markets = load_market_prices(menus)
                     plans = make_day_plans(tenant_id, menus, plan_text, budget=conditions["budget"], requested_area_names=words,
                                            markets=markets, day_trip=conditions["day_trip"],
                                            activities=activity_keywords(parsed["keywords"]))
+                    # 1日プランを点の高い順に並べる（利用者が挙げたエリアのプランが先、代替案が後ろの順は保つ）
+                    plans = rank_plans(plans, scores)
 
                     # ③ 画面が再実行されても結果が消えず、AIを呼び直さないよう保存しておく
                     st.session_state["search_text_result"] = {"parsed": parsed, "menus": menus, "plans": plans,
@@ -182,6 +189,8 @@ def _condition_tab(tenant_id: str) -> None:
                 # ② 検索する（このタブでは1日プランは組まない）
                 menus = search_menus(tenant_id, area_code=area_code, category=category_key,
                                      people=int(people), budget=budget_value, budget_categories=budget_categories)
+                # 施設を ranking.py の共通スコアの高い順に並べる（このタブは検索ワードがないので、お得度と品質で決まる）
+                menus = rank_menus(menus, facility_scores(menus, []))
                 # お得額は1日プランと同じく、市場価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
                 markets = load_market_prices(menus)
                 # ③ 画面が再実行されても結果が消えないよう保存しておく
@@ -211,3 +220,6 @@ def render() -> None:
             _text_tab(user.tenant_id)
         with tab_condition:
             _condition_tab(user.tenant_id)
+    # 検索する前は、検索欄の下にお得ランキング・新着・最近の口コミを出す（どちらかのタブで検索したら消える）
+    if "search_text_result" not in st.session_state and "search_condition_result" not in st.session_state:
+        render_home(user)

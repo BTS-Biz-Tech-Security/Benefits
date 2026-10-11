@@ -13,10 +13,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
-from db import table
 from models import MarketPrice, Menu, Plan
 from nl_search import MODEL, llm_api_key
-from pricing import normalize
+from pricing import COMPARED_TO_MARKET, plan_saving, representative_prices
 from search import count_keyword_hits, list_areas, per_person
 from spots import spots_by_area
 
@@ -94,42 +93,6 @@ class DayPlan:
 
 # 料金プランの id → そのプランの市場価格。取れなかったプランは入っていない
 MarketsByPlan = dict[str, MarketPrice]
-
-COMPARED_TO_MARKET = "市場価格"
-COMPARED_TO_LIST = "定価"
-
-
-@dataclass
-class PriceCompare:
-    """福利厚生価格と、比べる価格（市場価格か定価）。金額はすべて1人あたり。"""
-    benefit_price: int
-    compared_price: int
-    compared_to: str  # "市場価格" / "定価"
-    saving: int  # 比べる価格 − 福利厚生価格。市場価格の方が安ければマイナス
-    saving_rate: int  # お得額の割合（%、四捨五入）。比べる価格が0なら0
-
-
-# TODO(pricing.py): pricing.plan_saving（じゅんぺいさん担当）ができたら、この関数と PriceCompare を消し、
-# 「from pricing import plan_saving」に置き換える。引数と戻り値は plan_saving と同じにしてある
-def plan_saving(plan: Plan, market: Optional[MarketPrice]) -> PriceCompare:
-    """料金プランの福利厚生価格を、市場価格（なければ定価）と比べる。金額は1人あたり。
-
-    市場価格は、プランの人数・泊数にそろえてから（pricing.normalize）1人あたりにする。
-    """
-    # ① 比べる価格を決める。市場価格があればそれ、なければ定価
-    if market is not None:
-        market_price, _ = normalize(market, plan)
-        compared_price = per_person(market_price, plan)
-        compared_to = COMPARED_TO_MARKET
-    else:
-        compared_price = per_person(plan.list_price, plan)
-        compared_to = COMPARED_TO_LIST
-    # ② 1人あたりの福利厚生価格と、お得額・割合
-    benefit_price = per_person(plan.benefit_price, plan)
-    saving = compared_price - benefit_price
-    saving_rate = round(saving * 100 / compared_price) if compared_price else 0
-    return PriceCompare(benefit_price, compared_price, compared_to, saving, saving_rate)
-
 
 def best_saving_plan(menu: Menu, max_price: Optional[float] = None,
                      markets: Optional[MarketsByPlan] = None) -> Optional[Plan]:
@@ -424,34 +387,15 @@ def _load_spots(tenant_id: str, area_id: str) -> list[Spot]:
     return spots
 
 
-def _read_plan_market_rows(plan_ids: list[str]) -> list[dict[str, Any]]:
-    """market_prices のうち、料金プランにひも付いた（plan_id が入った）代表値の行を読む。
-
-    TODO(pricing.py): 料金プランごとの市場価格を読む関数が pricing.py（じゅんぺいさん担当）にできたら、
-    この関数を消し、load_market_prices からそちらを呼ぶ。
-    """
-    if not plan_ids:
-        return []
-    query = table("market_prices").select("*").in_("plan_id", plan_ids).eq("is_representative", True)
-    return query.execute().data
-
-
 def load_market_prices(menus: list[Menu]) -> MarketsByPlan:
-    """料金プランごとの市場価格（料金プランの id → 価格）。宿泊施設の料金プランだけ。
+    """料金プランごとの市場価格（料金プランの id → 価格）。pricing.representative_prices で読む。
 
-    料金プランにひも付いた価格（plan_id が入った行）だけを使う。宿ごとの価格（plan_id が空の行）は、
-    どのプランの価格か分からないので使わない（1つの価格をすべてのプランと比べると、素泊まりばかり選ばれるため）。
-    ひも付いた価格がないプランや、読めなかったとき（plan_id の列がまだないときを含む）は、そのプランを定価と比べる。
+    読めなかったとき（plan_id の列がまだないときを含む）は空にし、すべてのプランを定価と比べる。
     """
-    plan_ids = [plan.id for menu in menus if menu.category == "stay" for plan in menu.plans]
     try:
-        rows = _read_plan_market_rows(plan_ids)
+        return representative_prices([menu.id for menu in menus])
     except Exception:  # 市場価格が読めなくても、定価と比べて組む
         return {}
-    markets: MarketsByPlan = {}
-    for row in rows:
-        markets[row["plan_id"]] = MarketPrice.from_row(row)
-    return markets
 
 
 def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget: Optional[int] = None,
