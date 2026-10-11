@@ -52,7 +52,7 @@ def test_one_candidate_in_same_city_is_matched():
 
 
 def test_two_candidates_in_same_city_need_review():
-    data = response(("1", "ホテルA", "静岡県", "熱海市東海岸町"), ("2", "ホテルA 別邸", "静岡県", "熱海市和田浜"))
+    data = response(("1", "ホテルA 本館", "静岡県", "熱海市東海岸町"), ("2", "ホテルA 別邸", "静岡県", "熱海市和田浜"))
     res = mh.match_menu({"id": "m1", "name": "ホテルA", "address": "静岡県熱海市"}, CREDS, fake_get({"ホテルA": data}),
                         sleep=lambda s: None)
     assert (res.status, res.hotel_no) == (mh.UNSURE, None)
@@ -120,3 +120,21 @@ def test_no_rating_writes_only_hotel_number():
     c = mh.Candidate("1234", "天成園", "神奈川県足柄下郡箱根町", rating=mh.to_rating(None), review_count=mh.to_count(None))
     assert mh.menu_update(c) == {"hotel_ref": "1234", "matched": True}
     assert mh.to_rating("0") is None and mh.to_rating("abc") is None and mh.to_rating(5.0) == 5.0
+
+
+def test_exact_name_wins_over_annex_in_same_city():
+    # 本館と別館（ANNEX）が同じ町にあるときは、括弧を除いた名前が施設名と同じ本館を選ぶ
+    data = response(("184396", "ラビスタ函館ベイＡＮＮＥＸ（共立リゾート）", "北海道", "函館市大手町5-23"),
+                    ("69295", "ラビスタ函館ベイ（共立リゾート）", "北海道", "函館市豊川町12-6"))
+    res = mh.match_menu({"id": "m1", "name": "ラビスタ函館ベイ", "address": "北海道函館市"}, CREDS,
+                        fake_get({"ラビスタ函館ベイ": data}), sleep=lambda s: None)
+    assert (res.status, res.hotel_no) == (mh.MATCHED, "69295")
+
+
+def test_two_different_hotels_stay_unsure():
+    # 名前が完全に同じ候補がなければ、要確認のまま
+    data = response(("105964", "志摩観光ホテル　ザ　ベイスイート", "三重県", "志摩市阿児町神明731"),
+                    ("1150", "志摩観光ホテル　ザ　クラシック", "三重県", "志摩市阿児町神明731"))
+    res = mh.match_menu({"id": "m1", "name": "志摩観光ホテル", "address": "三重県志摩市"}, CREDS,
+                        fake_get({"志摩観光ホテル": data}), sleep=lambda s: None)
+    assert res.status == mh.UNSURE

@@ -62,6 +62,13 @@ def normalize(text: str) -> str:
     return re.sub(r"[\s・]", "", unicodedata.normalize("NFKC", text or ""))
 
 
+def base_name(name: str) -> str:
+    """括弧の部分（「（共立リゾート）」「＜石垣島＞」など）を除き、全角・半角と空白の違いをなくした名前。"""
+    text = unicodedata.normalize("NFKC", name or "")
+    text = re.sub(r"[（(][^）)]*[）)]|[＜<][^＞>]*[＞>]", "", text)
+    return normalize(text)
+
+
 def key_word(name: str) -> str:
     """施設名の最後の語。施設名は「地名 宿の名前」の順が多いので、宿を見分けるのに使う（「箱根 芦ノ湖 はなをり」なら「はなをり」）。"""
     words = [w for w in re.split(r"[ 　]+", name.strip()) if w]
@@ -131,7 +138,8 @@ def search_hotels(keyword: str, creds: Credentials, get: Callable[..., Any] = re
 def choose(name: str, address: Optional[str], candidates: list[Candidate]) -> tuple[str, Optional[str]]:
     """候補から施設を決める。住所の（都道府県, 市区町村）が同じで、名前に施設名の最後の語を含む候補が1件だけなら一致。
 
-    語を短くして探し直したときに、同じ町の別の宿を取り違えないよう、名前も確かめる。それ以外は要確認。
+    語を短くして探し直したときに、同じ町の別の宿を取り違えないよう、名前も確かめる。
+    条件に合う候補が複数あるときは、括弧を除いた名前が施設名と完全に同じ候補が1件だけなら一致。それ以外は要確認。
     """
     if not candidates:
         return NOT_FOUND, None
@@ -140,6 +148,10 @@ def choose(name: str, address: Optional[str], candidates: list[Candidate]) -> tu
     same = [c for c in candidates if key is not None and area_key(c.address) == key and word in normalize(c.name)]
     if len(same) == 1:
         return MATCHED, same[0].hotel_no
+    # 同じ町に別館（アネックスなど）もあるときは、括弧を除いた名前が施設名と完全に同じものを選ぶ
+    exact = [c for c in same if base_name(c.name) == base_name(name)]
+    if len(exact) == 1:
+        return MATCHED, exact[0].hotel_no
     return UNSURE, None
 
 
