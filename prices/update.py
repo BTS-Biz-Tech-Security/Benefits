@@ -4,7 +4,7 @@
 - 宿（category=stay）で hotel_ref のある施設の料金プランが対象。人数・泊数・食事の条件はプランに合わせる
 - 楽天のアプリID・アクセスキーがなければ、全件を仮の価格（source='dummy'）で入れる
 - 取得した価格は、そのプランの「比べる日」の価格として保存する（is_representative=true。前の値はフラグを外して残す）
-- 連続 STOP_AFTER 回失敗したら止め、fetch_logs に stopped=true を残す
+- 通信の失敗が連続 STOP_AFTER 回続いたら止め、fetch_logs に stopped=true を残す（空室なし・条件に合う料金なしは楽天が応答しているので数えない）
 - --dry-run は取得した価格を表示するだけで、データベースには書かない
 - 最初にまとめて入れるときや、仮の価格を入れ直すときに手で動かす。検索のたびの取り直しは prices/refresh.py が行う
 - secrets.toml がない環境では、環境変数から接続情報を読む
@@ -91,15 +91,22 @@ def main() -> None:
         log = c.table("fetch_logs").insert({"tenant_id": menus[0]["tenant_id"], "started_at": datetime.now(timezone.utc).isoformat(),
                                             "target_count": len(plans)}).execute().data[0]
 
-    # ③ 1プランずつ取得する。連続で失敗したら止める
+    # ③ 1プランずつ取得する。通信の失敗が続いたら止める（楽天側の障害や一時的な利用制限のとき、呼び続けないため）
     ok = ng = streak = 0
     stopped = False
+    # 部屋のグレードは区別しないので、同じ宿・人数・泊数・食事の条件なら結果は同じ。楽天への問い合わせを1回にまとめる
+    cache: dict[tuple, tuple[Optional[Fetched], Optional[Exception]]] = {}
     for p in plans:
         m = by_menu[p.menu_id]
-        fetched, error = fetch_with_retry(m["hotel_ref"], p, args.checkin, creds)
+        key = (m["hotel_ref"], *plan_conditions(p), p.meal)
+        fresh = key not in cache
+        if fresh:
+            cache[key] = fetch_with_retry(m["hotel_ref"], p, args.checkin, creds)
+        fetched, error = cache[key]
         if fetched is None:
             ng += 1
-            streak += 1
+            if not isinstance(error, NotAvailable):
+                streak += 1
             print(f"  失敗 {m['name']}／{p.name}: {error}")
             if streak >= STOP_AFTER:
                 stopped = True
@@ -112,7 +119,7 @@ def main() -> None:
         # ④ 比べる日の印を付け替えて保存する（前の値は残す）
         if not args.dry_run:
             save_price(c.table, p, m["hotel_ref"], args.checkin, fetched, datetime.now(timezone.utc))
-        if fetched.source == "rakuten_api":
+        if fresh and fetched.source == "rakuten_api":
             time.sleep(INTERVAL_SEC)
 
     # ⑤ 取得の記録を締める
