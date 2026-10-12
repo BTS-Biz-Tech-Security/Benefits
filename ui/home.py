@@ -20,9 +20,9 @@ def render_home(user: User) -> None:
     for i, (m, r) in enumerate(top_deals(user.tenant_id, 5)):
         with cols[i]:
             # 施設名は長さがまちまちで折り返すため、ボタンより下に置いて位置を揃える
-            st.image(image_url(m.photo_url, m.name, m.category, width=200, height=120), use_container_width=True)
+            st.image(image_url(m.photo_url, m.name, m.category, width=200, height=120), width="stretch")
             st.markdown(f"**{i+1}位**　:green[**{r.saving:,}円お得**（{r.saving_rate}%）]")
-            if st.button("詳細を見る", key=f"rank-{m.id}", use_container_width=True):
+            if st.button("詳細を見る", key=f"rank-{m.id}", width="stretch"):
                 st.session_state["menu_id"] = m.id; st.session_state["page"] = "detail"; st.rerun()
             st.caption(m.name)
     # ② 新着（ランキングと同じカードの形で、画像・最安の福利厚生価格・ボタン・施設名）
@@ -34,9 +34,9 @@ def render_home(user: User) -> None:
         cols = st.columns(5)
         for i, m in enumerate(new):
             with cols[i]:
-                st.image(image_url(m.photo_url, m.name, m.category, width=200, height=120), use_container_width=True)
+                st.image(image_url(m.photo_url, m.name, m.category, width=200, height=120), width="stretch")
                 st.markdown(f":red-badge[新着]　**{min_benefit_price(m):,}円〜**")
-                if st.button("詳細を見る", key=f"new-{m.id}", use_container_width=True):
+                if st.button("詳細を見る", key=f"new-{m.id}", width="stretch"):
                     st.session_state["menu_id"] = m.id; st.session_state["page"] = "detail"; st.rerun()
                 st.caption(m.name)
     # ③ 最近の口コミ
