@@ -13,7 +13,8 @@ from typing import Any, Optional
 
 import streamlit as st
 
-from day_plan import BUDGET_ALLOWANCE, DayPlan, activity_keywords, load_market_prices, make_day_plans
+from day_plan import (BUDGET_ALLOWANCE, DayPlan, activity_keywords, load_market_prices, make_day_plans,
+                     requested_area_keywords)
 from models import CATEGORIES, Menu
 from nl_search import SEARCH_FOCUS_OPTIONS, ai_available, parse_plan
 from ranking import facility_scores, plan_weights, rank_menus, rank_plans
@@ -95,7 +96,8 @@ def _text_tab(tenant_id: str) -> None:
                     conditions = parsed["conditions"]
                     words = [item.get("keyword", "") for item in parsed["keywords"]]
 
-                    # ② 検索し、1日プランを組む。キーワードにエリア名があれば、そのエリアのプランを先に、ほかは代替案として並べる
+                    # ② 検索し、1日プランを組む。利用者が文章に書いた地名があれば、そのエリアのプランを先に、ほかは代替案として並べる
+                    # （書いた地名がどのエリアにも当たらなければ、すべて代替案。AI が推測した行き先は希望として扱わない）
                     # 宿は予算の1.5倍（BUDGET_ALLOWANCE）まで残し、超える額はバッジで示す。「施設を検索」タブは予算ちょうどまで
                     menus = search_menus(tenant_id, people=conditions["people"], budget=conditions["budget"], keywords=words,
                                          budget_allowance=BUDGET_ALLOWANCE)
@@ -104,7 +106,8 @@ def _text_tab(tenant_id: str) -> None:
                     menus = rank_menus(menus, scores)
                     # お得額は、市場価格が取れた料金プランはそれと、取れなかったプランは定価と比べる
                     markets = load_market_prices(menus)
-                    plans = make_day_plans(tenant_id, menus, plan_text, budget=conditions["budget"], requested_area_names=words,
+                    plans = make_day_plans(tenant_id, menus, plan_text, budget=conditions["budget"],
+                                           requested_area_names=requested_area_keywords(parsed["keywords"], plan_text),
                                            markets=markets, day_trip=conditions["day_trip"],
                                            activities=activity_keywords(parsed["keywords"]))
                     # 1日プランを点の高い順に並べる（利用者が挙げたエリアのプランが先、代替案が後ろの順は保つ）

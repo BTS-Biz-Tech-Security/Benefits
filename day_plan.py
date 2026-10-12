@@ -29,6 +29,8 @@ BUDGET_ALLOWANCE = 1.5
 KIND_LABELS = {"benefit": "福利厚生", "spot": "周辺スポット", "free": "自由時間"}
 # nl_search が読み取ったキーワードの分類のうち、遊びの希望（例:「ゴルフ」）
 ACTIVITY_CATEGORY = "アクティビティ"
+# 同じく、行き先の希望（例:「箱根」）
+AREA_CATEGORY = "エリア"
 
 
 @dataclass
@@ -77,6 +79,7 @@ class DayPlan:
     explanation: str = ""
     budget: Optional[int] = None  # 宿代の予算（1泊・1人あたり）。宿泊施設にだけ当てはめる
     alternative: bool = False  # 利用者が挙げたエリア以外の代替案のとき True
+    requested_areas: list[str] = field(default_factory=list)  # 代替案のとき、利用者が挙げたエリア名（例:「福岡」）
     day_trip_requested: bool = False  # 利用者が日帰りと書いたとき True（宿を探していない）。False で day_trip なら、宿が見つからなかった
     unmet_activities: list[str] = field(default_factory=list)  # 遊びの希望のうち、このエリアの施設にも周辺スポットにもないもの
 
@@ -177,6 +180,27 @@ def _pick_spot(spots: list[Spot], kind: str, used: set[str]) -> Optional[Spot]:
 def activity_keywords(keywords: Iterable[dict[str, Any]]) -> list[str]:
     """読み取ったキーワード（[{keyword, category, reason}]）のうち、遊びの希望（アクティビティ）に分類されたもの。"""
     return [k["keyword"] for k in keywords if k.get("category") == ACTIVITY_CATEGORY and k.get("keyword")]
+
+
+def area_keywords(keywords: Iterable[dict[str, Any]]) -> list[str]:
+    """読み取ったキーワード（[{keyword, category, reason}]）のうち、行き先の希望（エリア）に分類されたもの。"""
+    return [k["keyword"] for k in keywords if k.get("category") == AREA_CATEGORY and k.get("keyword")]
+
+
+def requested_area_keywords(keywords: Iterable[dict[str, Any]], request_text: str) -> list[str]:
+    """エリアのキーワードのうち、利用者が文章に書いた地名。AI が推測して足した行き先は入れない
+    （地名を書かずに探した人に「ご希望の〇〇ではなく」と出さないため）。
+    AI が地名を言い換えることがあるので、先頭2文字が文章にあれば書いたものとみなす（文章の「草津」で、キーワードの「草津温泉」）。"""
+    return [w for w in area_keywords(keywords) if w in request_text or w[:2] in request_text]
+
+
+def matches_area(word: str, area_name: str) -> bool:
+    """利用者が挙げた地名が、エリア名に当たるか。
+    エリア名の一部でも当たりにする（「出雲」で「松江・出雲」、「高山」で「飛騨高山」）。
+    地名の方が長くても、エリア名（「・」で分けた語）を含めば当たりにする（「草津温泉」で「草津」、「有馬温泉」で「神戸・有馬」）。"""
+    if word in area_name:
+        return True
+    return any(part in word for part in area_name.split("・") if len(part) >= 2)
 
 
 def unmet_activities(menus: list[Menu], spots: list[Spot], activities: Iterable[str]) -> list[str]:
@@ -341,13 +365,17 @@ def _explain_with_ai(plan: DayPlan, request_text: str, api_key: str) -> str:
         rules.append("「見つからなかった希望」に合う福利厚生メニューは見つからなかったので、そのことを正直に書くこと。"
                      "自由時間の枠は、その希望に使える時間として触れてよい（ただし施設や店の名前は出さないこと）")
     if plan.alternative:
-        rules.append("このプランは利用者が挙げたエリア以外からの代替案なので、冒頭でそのことを断り、代わりに勧める理由を書くこと")
+        requested = "・".join(plan.requested_areas) or "利用者が挙げたエリア"
+        rules.append(f"このプランは、利用者が希望した{requested}ではなく、{plan.area_name}のプランを代替案として出すもの。"
+                     f"冒頭で「ご希望の{requested}ではなく、{plan.area_name}のプランです」のようにそのことを断り、代わりに勧める理由を書くこと")
     rules.append("説明文だけを出力すること")
 
     prompt = "あなたは企業の福利厚生サービスに詳しい旅行アドバイザーです。"
     prompt += "次の1日プランについて、利用者の希望に照らして、なぜこの組み合わせがよいかを2〜3文で説明してください。\n"
     prompt += "".join(f"- {rule}\n" for rule in rules)
     prompt += f"\nエリア：{plan.area_name}\n"
+    if plan.alternative and plan.requested_areas:
+        prompt += f"利用者が希望したエリア：{'・'.join(plan.requested_areas)}\n"
     if plan.budget:
         prompt += f"宿代の予算（1泊・1人あたり）：{plan.budget:,}円\n"
     if plan.day_trip:
@@ -405,8 +433,9 @@ def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget:
     """画面から呼ぶ入口。エリアごとにプランを組み、説明文を付けて返す。組めなければ空のリスト。
 
     menus は検索結果の順位順に並んでいる前提（順位は ranking.py が決める）。
-    requested_area_names（利用者が挙げたエリア名）があれば、そのエリアのプランを先に並べ、
+    requested_area_names（利用者が挙げたエリア名。area_keywords の結果）があれば、そのエリアのプランを先に並べ、
     それ以外のエリアのプランは代替案として後ろに並べる。合わせて最大 MAX_PLANS 個。
+    挙げたエリア名がどのエリアにも当たらなければ、すべてのプランを代替案にする。
     宿のプランは、宿代の予算 × BUDGET_ALLOWANCE 以内のものから選ぶ。
     markets（load_market_prices の結果）を渡すと、市場価格が取れたプランは、お得額をそれと比べる。
     day_trip（利用者が日帰りと書いたとき）が True なら、どのエリアでも夜の枠（宿）は出さない。
@@ -420,10 +449,9 @@ def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget:
     for area in list_areas(tenant_id):
         area_names[area.id] = area.name
 
-    # ② 利用者が挙げたエリアがあれば、それを先に、ほかを後ろに並べ替える
-    # エリア名の一部でも当たりにする（「出雲」で「松江・出雲」、「高山」で「飛騨高山」）。1文字の語は誤って当たりやすいので使わない
+    # ② 利用者が挙げたエリアがあれば、それを先に、ほかを後ろに並べ替える。1文字の語は誤って当たりやすいので使わない
     words = [w for w in requested_area_names if w and len(w) >= 2]
-    requested = [name for name in area_names.values() if any(w in name for w in words)]
+    requested = [name for name in area_names.values() if any(matches_area(w, name) for w in words)]
     if requested:
         first = [a for a in area_ids if area_names.get(a) in requested]
         rest = [a for a in area_ids if area_names.get(a) not in requested]
@@ -441,7 +469,10 @@ def make_day_plans(tenant_id: str, menus: list[Menu], request_text: str, budget:
                               markets=markets, day_trip=day_trip, activities=activities)
         if plan is None:
             continue
-        plan.alternative = bool(requested) and area_name not in requested
+        # 挙げた地名がどのエリアにも当たらなかったときは、どのプランも代替案にする
+        plan.alternative = bool(words) and area_name not in requested
+        if plan.alternative:
+            plan.requested_areas = words
         plan.explanation = explain(plan, request_text)
         plans.append(plan)
     return plans
