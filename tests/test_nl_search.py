@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime
 
+import nl_search
 from nl_search import normalize_conditions, parse_with_rules
 
 TODAY = datetime.date(2026, 10, 6)
@@ -103,3 +104,27 @@ def test_parse_plan_drops_date_not_in_text(monkeypatch):
     monkeypatch.setattr(nl_search, "_parse_with_ai", lambda text, focus, key: {
         "summary": "", "keywords": [], "conditions": {"stay_date": "01-03", "people": 4, "day_trip": True}})
     assert nl_search.parse_plan("1月3日に4人で日帰り", today=TODAY)["conditions"]["stay_date"] == datetime.date(2027, 1, 3)
+
+
+def test_restore_written_budget_undoes_people_multiplication():
+    # AI が「1人2万円」を2人分に掛けて 40000 と返したとき、文章に書かれた 20000 に戻す
+    conditions = {"people": 2, "budget_amount": 40000, "budget_per_person": True, "budget_per_night": True, "nights": 1}
+    nl_search.restore_written_budget(conditions, "大人2人で1泊、宿代は1人2万円までです。")
+    assert conditions["budget_amount"] == 20000
+
+
+def test_restore_written_budget_keeps_written_amount():
+    conditions = {"people": 2, "budget_amount": 40000, "budget_per_person": False, "budget_per_night": True}
+    nl_search.restore_written_budget(conditions, "2人で1泊4万円まで")
+    assert conditions["budget_amount"] == 40000
+
+
+def test_restore_written_budget_ignores_unrelated_amount():
+    # 書かれた金額の人数倍・泊数倍でなければ、触らない
+    conditions = {"people": 2, "budget_amount": 50000, "budget_per_person": True, "budget_per_night": True}
+    nl_search.restore_written_budget(conditions, "ランチは1人3,000円、宿は1人5万円まで")
+    assert conditions["budget_amount"] == 50000
+
+
+def test_written_amounts():
+    assert nl_search.written_amounts("宿は１人２万円、ランチは3,000円、1.5万円") == [20000, 15000, 3000]
