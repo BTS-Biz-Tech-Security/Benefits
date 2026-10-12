@@ -1,11 +1,12 @@
 """楽天トラベルの施設情報（紹介文・設備・お風呂など）から、宿のタグを付け直す。
 
-使い方: python -m prices.retag_hotels [--since 2026-10-12] [--apply]
+使い方: python -m prices.retag_hotels [--since 2026-10-12] [--all --merge] [--apply]
 - 対象は、宿（category=stay）で hotel_ref が楽天のホテル番号のもののうち、内容の更新日（content_updated_at）が --since 以降のもの
   （既定は prices.add_hotels で追加した日。手で付けたタグのある元からの宿は対象にしない）
 - 施設名で楽天のキーワード検索APIを呼び（responseType=large）、同じホテル番号の施設の文字をまとめて、TAG_RULES の語でタグを決める
 - 住所・電話番号・URL は見ない（「北海道」の「海」などで誤ってタグが付かないようにするため）。アクセスは「駅近」の判定にだけ使う
 - 今のタグ（prices.add_hotels が紹介文の一部から付けたもの）は、見つかったタグで置き換える。--apply を付けたときだけ書き込む
+- --all で元からの宿も含めた全部の宿を対象にする。--merge を付けると置き換えずに、今のタグ（手で付けたもの）を残して足す
 """
 from __future__ import annotations
 
@@ -109,6 +110,13 @@ def tags_from(parts: list[dict[str, Any]]) -> list[str]:
     return tags
 
 
+def merge_tags(current: Iterable[str], found: Iterable[str]) -> list[str]:
+    """今あるタグを残し、見つかったタグを後ろに足す（重複なし）。手で付けたタグのある宿で使う。"""
+    out = list(dict.fromkeys(current))
+    out.extend(t for t in found if t not in out)
+    return out
+
+
 def fetch_hotel(name: str, hotel_no: str, creds: Credentials, get: Callable[..., Any] = requests.get,
                 sleep: Callable[[float], None] = time.sleep) -> Optional[list[dict[str, Any]]]:
     """施設名（見つからなければ最後の語）で検索し、ホテル番号が同じ宿の部品を返す。"""
@@ -132,6 +140,8 @@ def main() -> None:
     """宿のタグを付け直す。--apply でなければ結果を表示するだけ。"""
     ap = argparse.ArgumentParser()
     ap.add_argument("--since", default="2026-10-12", help="内容の更新日がこの日以降の宿を対象にする（YYYY-MM-DD）")
+    ap.add_argument("--all", action="store_true", help="内容の更新日に関係なく、全部の宿を対象にする")
+    ap.add_argument("--merge", action="store_true", help="今のタグを残し、見つかったタグを足す")
     ap.add_argument("--apply", action="store_true", help="タグを書き込む")
     args = ap.parse_args()
 
@@ -144,7 +154,10 @@ def main() -> None:
         print("楽天のアプリID・アクセスキーがないため、付け直せません（secrets.toml の [rakuten] に書く）")
         return
     c = create_client(cfg["url"], cfg["key"]).schema("bts_app")
-    menus = (c.table("menus").select("id,name,hotel_ref,tags").eq("category", "stay").gte("content_updated_at", args.since)
+    query = c.table("menus").select("id,name,hotel_ref,tags").eq("category", "stay")
+    if not args.all:
+        query = query.gte("content_updated_at", args.since)
+    menus = (query
              .is_("deleted_at", "null").order("name").execute().data)
     menus = [m for m in menus if is_rakuten_ref(m.get("hotel_ref"))]
     print(f"対象の宿: {len(menus)}件" + ("" if args.apply else "（表示のみ。書き込むときは --apply）"))
@@ -160,7 +173,8 @@ def main() -> None:
             print(f"  見つからない　{m['name']}（{m['hotel_ref']}）")
             continue
         before = list(m.get("tags") or [])
-        after = tags_from(parts)
+        found = tags_from(parts)
+        after = merge_tags(before, found) if args.merge else found
         print(f"  {m['name']}: {'、'.join(after) or 'なし'}" + ("" if after != before else "　（変更なし）"))
         if after != before:
             changed += 1

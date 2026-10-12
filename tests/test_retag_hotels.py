@@ -76,3 +76,7 @@ def test_scenery_tags_come_only_from_name_and_description():
         {"hotelFacilitiesInfo": {"hotelFacilities": [{"item": "ビーチ"}, {"item": "スキー"}, {"item": "サウナ"}]}},
     ]
     assert rt.tags_from(parts) == ["露天風呂", "サウナ"]
+
+
+def test_merge_keeps_hand_tags():
+    assert rt.merge_tags(["温泉", "家族向け"], ["温泉", "露天風呂"]) == ["温泉", "家族向け", "露天風呂"]
