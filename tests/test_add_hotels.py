@@ -50,7 +50,7 @@ def test_menu_and_plan_rows():
     h = hotel("123", "海辺のリゾート", desc="★全室オーシャンビュー★\n海を望む露天風呂")
     row = ah.menu_row(h, "t", "a", date(2026, 10, 12))
     assert row["hotel_ref"] == "123" and row["matched"] is True and row["external_rating_source"] == "rakuten_api"
-    assert "海" in row["tags"] and "露天" in row["tags"] and "リゾート" in row["tags"]
+    assert "海" in row["tags"] and "露天風呂" in row["tags"] and "リゾート" in row["tags"]
     assert "★" not in row["description"] and "\n" not in row["description"]
     plans = ah.plan_rows(h, "m")
     assert [p["name"] for p in plans] == ["スタンダード（2食付）", "デラックス（2食付）", "素泊まり"]

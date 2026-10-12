@@ -70,10 +70,6 @@ AREA_QUERIES: dict[str, tuple[list[str], list[str], list[str]]] = {
     "ishigaki": (["石垣島"], ["石垣市", "八重山郡"], []),
 }
 
-# 紹介文・施設名にこの語があればタグにする（検索のキーワードに当たるようにするため）
-TAG_WORDS = ["温泉", "露天", "旅館", "リゾート", "海", "湖", "高原", "森", "夜景", "スキー", "ビーチ", "庭園", "和室",
-             "ファミリー", "子供", "朝食", "駅近", "スパ", "サウナ", "城"]
-
 DEFAULTS = {"usage_limit": "年2回まで", "family_scope": "本人と2親等まで", "cancel_policy": "7日前まで無料"}
 
 # 料金プラン（2名1泊）。金額は楽天の最安料金（1人あたり）× 倍率。福利厚生価格は定価の75%（sql/010 で市場価格に合わせて直す）
@@ -154,9 +150,9 @@ def pick(candidates: list[Hotel], include: list[str], exclude: list[str], known_
 
 
 def tags_of(h: Hotel) -> list[str]:
-    """施設名と紹介文から、タグにする語を選ぶ。"""
-    text = h.name + h.description
-    return [w for w in TAG_WORDS if w in text]
+    """施設名と紹介文から、タグを選ぶ（語の決まりは prices/retag_hotels.py の TAG_RULES と同じ）。"""
+    from prices.retag_hotels import tags_from
+    return tags_from([{"hotelBasicInfo": {"hotelName": h.name, "hotelSpecial": h.description}}])
 
 
 def short_description(text: str, limit: int = 80) -> str:
