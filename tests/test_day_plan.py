@@ -7,7 +7,7 @@ from typing import Optional
 import day_plan
 from day_plan import FREE_TIME, DayPlan, Spot, build_day_plan, plan_area_id
 from models import Area, MarketPrice, Menu, Plan
-from ui.day_plan import item_price_text, price_text
+from ui.day_plan import compact_price_text, item_price_text, price_text
 
 HAKONE = "area-hakone"
 ATAMI = "area-atami"
@@ -439,6 +439,17 @@ def test_item_price_text_matches_benefit_item():
     item = day_plan.benefit_item("夜", stay, 8000, markets={"p1": market_price()})
     assert item_price_text(item) == (":gray[1人あたり] :gray[~~市場価格 13,000円~~ →] **9,000円**　"
                                      ":green[**4,000円お得**（31%）]　:gray[（2名で18,000円）]　:orange-badge[予算＋1,000円]")
+
+
+def test_compact_price_text_keeps_price_saving_and_budget_badge():
+    stay = Menu(id="m1", tenant_id="t", name="宿", category="stay", plans=[plan_for_two()])
+    item = day_plan.benefit_item("夜", stay, 8000, markets={"p1": market_price()})
+    assert compact_price_text(item) == "**9,000円**　:green[**4,000円お得**（31%）]　:orange-badge[予算＋1,000円]"
+
+
+def test_compact_price_text_without_saving_shows_price_only():
+    item = day_plan.PlanItem(slot="昼", kind="benefit", name="店", category="meal", price=5000, saving=-1000, saving_rate=-12)
+    assert compact_price_text(item) == "**5,000円**"
 
 
 def test_best_saving_plan_mixes_market_and_list_price_per_plan():

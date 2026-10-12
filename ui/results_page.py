@@ -13,7 +13,7 @@ from placeholder import image_url
 from pricing import representative_prices
 from posts import rating_summary
 from ranking import is_new
-from ui.day_plan import item_price_text
+from ui.day_plan import compact_price_text
 from ui.detail_page import open_detail
 
 SORTS = {"おすすめ順": "ranked", "お得順": "diff", "価格が安い順": "price", "評価が高い順": "rating"}
@@ -85,10 +85,10 @@ def render_results(menus: list[Menu], key: str, *, budget: Optional[int] = None,
             c1.markdown(badges + (f"　社員の評価 ★{avg}（{cnt}件）" if cnt else ""))
             if m.external_rating is not None:
                 c1.caption(f"外部サイトの評価 ★{m.external_rating}（{m.external_review_count or 0:,}件）")
-            # 金額は、1日プランのカードと同じ item_price_text で出す（予算を超えていれば「予算＋〇〇円」のバッジも付く）
+            # 金額は、1日プランのカードと同じ compact_price_text で短く出す（予算を超えていれば「予算＋〇〇円」のバッジも付く）
             # r は day_plan.PlanItem。料金プランがない施設でも r はあり、そのときは r.price が None になる
             if r.price is not None:
-                c1.markdown(item_price_text(r))
+                c1.markdown(compact_price_text(r))
             else:
                 c1.markdown(":gray[価格未登録]")
             # 詳細画面へは、1日プランのカードと同じ open_detail で移る。カードに出した料金プランの id（r.plan_id）も渡すと、

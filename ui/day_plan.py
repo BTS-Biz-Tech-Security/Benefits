@@ -42,9 +42,23 @@ def price_text(price: Optional[int], compared_price: Optional[int] = None, savin
 
 
 def item_price_text(item: PlanItem) -> str:
-    """プランの1枠（PlanItem）の金額を price_text の形にする。1日プランと検索画面の施設一覧で使う。"""
+    """プランの1枠（PlanItem）の金額を price_text の形（比べた価格や「（2名で〇〇円）」も入る詳しい形）にする。"""
     return price_text(item.price, item.compared_price, item.saving, item.saving_rate, item.compared_to or COMPARED_TO_LIST,
                       item.over_budget, item.plan_price, item.plan_people)
+
+
+def compact_price_text(item: PlanItem) -> str:
+    """一覧向けの短い金額。「**12,600円**　6,500円お得（34%）」の形（お得額は緑）。お得額がなければ福利厚生価格だけ。
+    比べた価格（市場価格・定価）と「（2名で〇〇円）」は出さず、詳細画面に任せる。予算を超えていれば「予算＋〇〇円」のバッジを付ける。
+    1日プランのカードと、検索画面の施設一覧で使う。"""
+    if item.price is None:
+        return ""
+    text = f"**{item.price:,}円**"
+    if item.saving and item.saving > 0:
+        text += f"　:green[**{item.saving:,}円お得**（{item.saving_rate}%）]"
+    if item.over_budget:
+        text += f"　:orange-badge[予算＋{item.over_budget:,}円]"
+    return text
 
 
 def day_trip_reason(plan: DayPlan) -> str:
@@ -76,7 +90,7 @@ def render_day_plan(plan: DayPlan) -> None:
             if item.kind == "benefit":
                 col_name.markdown(f"**{item.name}**")  # 福利厚生の施設名は太字
                 col_name.caption(item.plan_name or "")
-                col_price.markdown(item_price_text(item))
+                col_price.markdown(compact_price_text(item))
                 # 福利厚生の施設は、「詳細を見る」ボタンで詳細画面に移れる
                 if item.menu_id:
                     col_button.button("詳細を見る", key=f"day-plan-{plan.area_id}-{item.slot}-{item.menu_id}",
