@@ -75,3 +75,16 @@ def test_collect_stops_paging_when_page_is_short():
         return R()
     ah.collect("hakone", ah.Credentials("a", "k"), get, sleep=lambda s: None)
     assert calls == [("箱根", 1)]
+
+
+def test_annex_and_sister_hotels_are_known():
+    known = {"ラビスタ函館ベイ", "志摩観光ホテル"}
+    assert ah.is_known("ラビスタ函館ベイＡＮＮＥＸ（共立リゾート）", known)
+    assert ah.is_known("志摩観光ホテル　ザ　ベイスイート", known)
+    assert not ah.is_known("センチュリーマリーナ函館", known)
+
+
+def test_address_with_two_prefectures_is_out_of_area():
+    _, include, exclude = ah.AREA_QUERIES["aomori"]
+    assert not ah.in_area("青森県秋田県鹿角郡小坂町十和田湖休平37", include, exclude)
+    assert ah.in_area("青森県十和田市奥瀬蔦野湯1", include, exclude)

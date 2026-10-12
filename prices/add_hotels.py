@@ -19,7 +19,7 @@ from typing import Any, Callable, Optional
 
 import requests
 
-from prices.match_hotels import SEARCH_URL, normalize, to_count, to_rating
+from prices.match_hotels import SEARCH_URL, base_name, to_count, to_rating
 from prices.rakuten import TIMEOUT, Credentials, hotel_parts, request_headers
 
 INTERVAL_SEC = 1.0  # 楽天への問い合わせの間隔（続けて呼ぶと一時的に止められるため）
@@ -27,6 +27,7 @@ PAGES = 2  # 検索語ごとに見るページ数（1ページ30件）
 MIN_REVIEWS = 100
 MIN_RATING = 4.0
 MIN_CHARGE = 8000  # 1人あたりの最安料金がこれより安い宿は、ビジネスホテルや素泊まりの宿が多いので外す
+PREFECTURE = re.compile(r"東京都|北海道|京都府|大阪府|.{2,3}県")
 EXCLUDE_NAME = re.compile(r"カプセル|ホステル|ゲストハウス|東横イン|アパホテル|ルートイン|スーパーホテル|ドーミーイン|コンフォートホテル|マンスリー|民泊")
 
 # エリアのコード → （検索語, 住所に含まれるべき語, 住所に含まれてはいけない語）。sql/007_areas.sql のエリアと同じ
@@ -110,8 +111,22 @@ def parse_hotels(data: dict[str, Any]) -> list[Hotel]:
 
 
 def in_area(address: str, include: list[str], exclude: list[str]) -> bool:
-    """住所がエリア内か。含まれるべき語のどれかを含み、含まれてはいけない語をどれも含まない。"""
+    """住所がエリア内か。含まれるべき語のどれかを含み、含まれてはいけない語をどれも含まない。
+
+    県境の宿は「青森県秋田県…」のように都道府県が2つ書かれていることがあるので、そのような住所は外す。
+    """
+    if len(PREFECTURE.findall(address)) > 1:
+        return False
     return any(w in address for w in include) and not any(w in address for w in exclude)
+
+
+def is_known(name: str, known_names: set[str]) -> bool:
+    """登録済みの宿と同じか、その別館・姉妹館か（括弧を除いた名前が、どちらかに含まれる）。
+
+    「ラビスタ函館ベイ」に対する「ラビスタ函館ベイANNEX」のように、同じ名前の別館を並べないため。
+    """
+    key = base_name(name)
+    return any(k and (k in key or key in k) for k in known_names)
 
 
 def eligible(h: Hotel) -> bool:
@@ -122,11 +137,14 @@ def eligible(h: Hotel) -> bool:
 
 def pick(candidates: list[Hotel], include: list[str], exclude: list[str], known_refs: set[str],
          known_names: set[str], count: int) -> list[Hotel]:
-    """候補から、エリア内で条件に合う未登録の宿を、評価の高い順・口コミの多い順に count 件選ぶ。"""
+    """候補から、エリア内で条件に合う未登録の宿を、評価の高い順・口コミの多い順に count 件選ぶ。
+
+    known_names は登録済みの宿の名前（match_hotels.base_name で括弧と空白を除いたもの）。
+    """
     seen: set[str] = set()
     ok = []
     for h in candidates:
-        if h.hotel_no in seen or h.hotel_no in known_refs or normalize(h.name) in known_names:
+        if h.hotel_no in seen or h.hotel_no in known_refs or is_known(h.name, known_names):
             continue
         seen.add(h.hotel_no)
         if in_area(h.address, include, exclude) and eligible(h):
@@ -223,7 +241,7 @@ def main() -> None:
     stays = (c.table("menus").select("area_id,name,hotel_ref").eq("tenant_id", tenant_id).eq("category", "stay")
              .is_("deleted_at", "null").execute().data)
     known_refs = {s["hotel_ref"] for s in stays if s.get("hotel_ref")}
-    known_names = {normalize(s["name"]) for s in stays}
+    known_names = {base_name(s["name"]) for s in stays}
     print(f"エリアごとに宿を{args.per_area}件にします" + ("" if args.apply else "（表示のみ。追加するときは --apply）"))
 
     # ③ エリアごとに、足りない数だけ選ぶ。--apply なら追加する
@@ -246,7 +264,7 @@ def main() -> None:
         for h in chosen:
             print(f"  {area['name']}　{h.name}（{h.hotel_no}）★{h.rating}（{h.review_count or 0:,}件）最安{h.min_charge or 0:,}円　{h.address}")
             known_refs.add(h.hotel_no)
-            known_names.add(normalize(h.name))
+            known_names.add(base_name(h.name))
             if args.apply:
                 row = menu_row(h, tenant_id, area["id"], date.today())
                 menu_id = with_db_retry(lambda: c.table("menus").insert(row).execute().data[0]["id"])
