@@ -30,8 +30,14 @@ def test_find_hotel_picks_same_number():
     assert rt.find_hotel(data, "9") is None
 
 
-def test_merge_keeps_current_tags():
-    assert rt.merge_tags(["温泉", "海"], ["海", "露天風呂"]) == ["温泉", "海", "露天風呂"]
+def test_ignores_leisure_policy_and_misleading_words():
+    parts = [
+        {"hotelBasicInfo": {"hotelNo": "3", "hotelName": "山の宿", "hotelSpecial": "海の幸を使った料理とウイスキーのバー",
+                            "userReview": "子供と行きました"}},
+        {"hotelFacilitiesInfo": {"leisureFacilities": [{"item": "スキー場"}, {"item": "ビーチ"}]}},
+        {"hotelPolicyInfo": {"note": "お子様の料金は大人の70%"}},
+    ]
+    assert rt.tags_from(parts) == []
 
 
 def test_fetch_falls_back_to_last_word():

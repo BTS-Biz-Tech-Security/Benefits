@@ -12,7 +12,7 @@ Step2-2 Webアプリ
 - 市場価格（楽天トラベルの価格）は market_prices に料金プランごとに入れる（人数・泊数・食事の条件をプランに合わせる。sql/009）。検索のたびに、取得してから6時間以上たったプランを最大5件まで楽天から取り直し、DBの値と違えば上書きする（prices/refresh.py）。secrets.toml の `[rakuten]` に `application_id` と `access_key`（許可Webサイトを登録した場合は `referer` も）がなければ取り直さず、DBの値をそのまま使う。楽天のキーはチャットに貼らない
 - 宿を楽天の施設と照合するときは `python -m prices.match_hotels`（結果の表示だけ。`--apply` を付けると、住所と名前が合う候補が1件だけの宿の hotel_ref を楽天のホテル番号に、外部の評価（external_rating・external_review_count）を楽天の星の平均と口コミ件数に書き換える）。照合のあとに下の `prices.update` を動かすと、本物の市場価格が入る。楽天のキーが必要
 - テスト用の宿をエリアごとに増やすときは `python -m prices.add_hotels`（候補の表示だけ。`--apply` を付けると、楽天の評価・口コミが多い未登録の宿を、エリアごとに `--per-area`〈既定3〉件になるまで、料金プラン3件と一緒に追加する）。追加のあとに `prices.update` と `sql/010_benefit_prices_from_market.sql` を動かす。楽天のキーが必要
-- 追加した宿のタグを付け直すときは `python -m prices.retag_hotels`（結果の表示だけ。`--apply` を付けると、楽天の紹介文・設備・お風呂の情報から決めたタグを、今あるタグに足す。対象は `--since`〈既定 2026-10-12〉以降に追加・更新した宿）。楽天のキーが必要
+- 追加した宿のタグを付け直すときは `python -m prices.retag_hotels`（結果の表示だけ。`--apply` を付けると、楽天の紹介文・設備・お風呂の情報から決めたタグに置き換える。対象は `--since`〈既定 2026-10-12〉以降に追加・更新した宿）。楽天のキーが必要
 - まとめて入れるときは `python -m prices.update`（`--dry-run` を付けると表示だけ）。楽天のキーがなければ仮の価格（source が dummy）を入れる
 - 意味の近さで探すには、`sql/004_search.sql` を実行し、`python -m seed.embed_menus` で施設のベクトルを入れておく
 

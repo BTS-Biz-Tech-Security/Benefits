@@ -5,7 +5,7 @@
   （既定は prices.add_hotels で追加した日。手で付けたタグのある元からの宿は対象にしない）
 - 施設名で楽天のキーワード検索APIを呼び（responseType=large）、同じホテル番号の施設の文字をまとめて、TAG_RULES の語でタグを決める
 - 住所・電話番号・URL は見ない（「北海道」の「海」などで誤ってタグが付かないようにするため）。アクセスは「駅近」の判定にだけ使う
-- 今あるタグは残し、見つかったタグを足す。--apply を付けたときだけ書き込む。付けなければ結果を表示するだけ
+- 今のタグ（prices.add_hotels が紹介文の一部から付けたもの）は、見つかったタグで置き換える。--apply を付けたときだけ書き込む
 """
 from __future__ import annotations
 
@@ -20,8 +20,10 @@ from prices.match_hotels import SEARCH_URL, key_word
 from prices.rakuten import TIMEOUT, Credentials, request_headers
 
 INTERVAL_SEC = 1.0  # 楽天への問い合わせの間隔（続けて呼ぶと一時的に止められるため）
+# 見ない項目。住所・連絡先のほか、宿そのものの特徴ではない文章（周辺のレジャー施設、子ども料金などの規定、最新の口コミ、地域名）も見ない
 SKIP_KEYS = {"address1", "address2", "postalCode", "telephoneNo", "faxNo", "latitude", "longitude",
-             "parkingInformation", "nearestStation", "access"}
+             "parkingInformation", "nearestStation", "access", "userReview", "leisureFacilities",
+             "hotelPolicyInfo", "hotelOtherInfo", "hotelDetailInfo", "hotelRatingInfo"}
 ACCESS_KEYS = {"access", "nearestStation"}
 
 # タグ → 当てはまる語（正規表現）。タグは見本データ（sql/003・007）と、検索の簡易な読み取り（nl_search.RULE_KEYWORDS）の語にそろえる
@@ -36,14 +38,15 @@ TAG_RULES: list[tuple[str, str]] = [
     ("個室", r"個室"),
     ("子ども", r"お子様|子供|子ども|キッズ|お子さま"),
     ("家族向け", r"ファミリー|家族|キッズ|お子様|三世代"),
-    ("海", r"(?<![熱上北])海(が|を|の|辺|岸|沿い|一望|水浴)|オーシャン|ビーチ|太平洋|日本海|瀬戸内"),  # 熱海・上海・北海道の「海」は除く
+    # 熱海・上海・北海道の「海」と、「海の幸」「海鮮」は除く
+    ("海", r"(?<![熱上北])海(が|を|辺|岸|沿い|一望|水浴|の見える|の眺め)|オーシャン|ビーチ|太平洋|日本海|瀬戸内"),
     ("ビーチ", r"ビーチ|海水浴"),
     ("湖", r"湖"),
     ("絶景", r"絶景|一望|パノラマ"),
     ("夜景", r"夜景"),
     ("高原", r"高原"),
     ("自然", r"自然|森|渓谷|渓流|川のせせらぎ|山々|里山"),
-    ("スキー", r"スキー|ゲレンデ"),
+    ("スキー", r"(?<!ウイ)(?<!ウィ)スキー|ゲレンデ"),  # ウイスキーは除く
     ("プール", r"プール"),
     ("リゾート", r"リゾート"),
     ("庭園", r"庭園|日本庭園"),
@@ -102,13 +105,6 @@ def tags_from(parts: list[dict[str, Any]]) -> list[str]:
     return tags
 
 
-def merge_tags(current: Iterable[str], found: Iterable[str]) -> list[str]:
-    """今あるタグを残し、見つかったタグを後ろに足す（重複なし）。"""
-    out = list(dict.fromkeys(current))
-    out.extend(t for t in found if t not in out)
-    return out
-
-
 def fetch_hotel(name: str, hotel_no: str, creds: Credentials, get: Callable[..., Any] = requests.get,
                 sleep: Callable[[float], None] = time.sleep) -> Optional[list[dict[str, Any]]]:
     """施設名（見つからなければ最後の語）で検索し、ホテル番号が同じ宿の部品を返す。"""
@@ -160,10 +156,9 @@ def main() -> None:
             print(f"  見つからない　{m['name']}（{m['hotel_ref']}）")
             continue
         before = list(m.get("tags") or [])
-        after = merge_tags(before, tags_from(parts))
-        added = [t for t in after if t not in before]
-        print(f"  {m['name']}: {'、'.join(after) or 'なし'}" + (f"　（追加: {'、'.join(added)}）" if added else ""))
-        if added:
+        after = tags_from(parts)
+        print(f"  {m['name']}: {'、'.join(after) or 'なし'}" + ("" if after != before else "　（変更なし）"))
+        if after != before:
             changed += 1
             if args.apply:
                 with_db_retry(lambda: c.table("menus").update({"tags": after}).eq("id", m["id"]).execute())
