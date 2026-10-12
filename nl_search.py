@@ -229,6 +229,9 @@ def parse_plan(plan_text: str, focus: str = SEARCH_FOCUS_OPTIONS[0], today: Opti
 
     # ② 読み取った結果を整える
     result["keywords"] = _drop_numeric_keywords(result.get("keywords", []))
+    # AI は「大人2人で、1人2万円」を人数分に掛けて 40000 と返すことがあるので、文章に書かれた金額に戻す
+    if isinstance(result.get("conditions"), dict):
+        restore_written_budget(result["conditions"], plan_text)
     result["conditions"] = normalize_conditions(result.get("conditions"), today)
     # AI は「12月に」から 12月1日のような日付を作ることがあるので、文章に月日が書かれているときだけ使う
     stay_date = result["conditions"]["stay_date"]
@@ -236,6 +239,30 @@ def parse_plan(plan_text: str, focus: str = SEARCH_FOCUS_OPTIONS[0], today: Opti
         result["conditions"]["stay_date"] = None
     result["used_ai"] = bool(api_key)
     return result
+
+
+def written_amounts(text: str) -> list[int]:
+    """文章に書かれた金額（円）。「2万円」「1.5万円」「30,000円」の形を読む。全角の数字も同じに扱う。"""
+    text = unicodedata.normalize("NFKC", text)  # 全角の数字・記号を半角にする
+    amounts = [int(float(m) * 10000) for m in re.findall(r"(\d+(?:\.\d+)?)\s*万円", text)]
+    amounts += [int(m.replace(",", "")) for m in re.findall(r"(\d[\d,]*)\s*円", text)]
+    return amounts
+
+
+def restore_written_budget(conditions: dict[str, Any], text: str) -> None:
+    """budget_amount が文章に書かれた金額を人数・泊数で掛けたものなら、書かれた金額に戻す（conditions をその場で直す）。
+    予算の計算（人数・泊数で割る）は _budget_per_person_per_night で行うので、ここでは書かれたままの金額にそろえるだけ。"""
+    amount = _to_positive_int(conditions.get("budget_amount"))
+    written = written_amounts(text)
+    if amount is None or not written or amount in written:
+        return
+    people = _to_positive_int(conditions.get("people")) or 1
+    nights = _to_positive_int(conditions.get("nights")) or 1
+    factors = {people, nights, people * nights} - {1}
+    for value in written:
+        if value > 0 and amount % value == 0 and amount // value in factors:
+            conditions["budget_amount"] = value
+            return
 
 
 def date_is_written(text: str, date: datetime.date) -> bool:
