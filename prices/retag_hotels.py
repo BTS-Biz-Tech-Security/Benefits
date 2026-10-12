@@ -56,6 +56,9 @@ TAG_RULES: list[tuple[str, str]] = [
     ("高級", r"スイート|ラグジュアリー|最高級|上質"),
     ("ペット", r"ペット|愛犬"),
 ]
+# 景色・遊び・宿の雰囲気のタグは、施設名と紹介文（hotelBasicInfo）だけで決める。設備の欄には、周辺の施設や一般的な項目の一覧が
+# 入っていることがあり、内陸の宿に「海」「スキー」が付いてしまったため。お風呂・設備のタグは設備の欄も見る
+BASIC_ONLY_TAGS = {"海", "ビーチ", "湖", "絶景", "夜景", "高原", "自然", "スキー", "庭園", "歴史", "静か", "記念日", "高級", "リゾート"}
 STATION_RULE = r"駅前|駅直結|駅すぐ|駅から徒歩\s*[0-9０-９]分|駅より徒歩\s*[0-9０-９]分"
 
 
@@ -96,9 +99,10 @@ def find_hotel(data: dict[str, Any], hotel_no: str) -> Optional[list[dict[str, A
 
 
 def tags_from(parts: list[dict[str, Any]]) -> list[str]:
-    """宿の部品の文字から、タグを決める。"""
+    """宿の部品の文字から、タグを決める。景色・遊びのタグ（BASIC_ONLY_TAGS）は施設名と紹介文だけで決める。"""
     text = " ".join(strings_of(parts, SKIP_KEYS))
-    tags = [tag for tag, pattern in TAG_RULES if re.search(pattern, text)]
+    basic = " ".join(strings_of([p for p in parts if "hotelBasicInfo" in p], SKIP_KEYS))
+    tags = [tag for tag, pattern in TAG_RULES if re.search(pattern, basic if tag in BASIC_ONLY_TAGS else text)]
     access = " ".join(strings_of(parts, set(), ACCESS_KEYS))
     if re.search(STATION_RULE, text + " " + access):
         tags.append("駅近")

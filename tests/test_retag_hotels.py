@@ -68,3 +68,11 @@ def test_add_hotels_uses_same_rules():
     h = ah.Hotel("1", "森の宿", "", "源泉かけ流しの露天風呂。キッズスペースあり", 4.5, 300, 15000)
     tags = ah.tags_of(h)
     assert "温泉" in tags and "露天風呂" in tags and "子ども" in tags and "自然" in tags
+
+
+def test_scenery_tags_come_only_from_name_and_description():
+    parts = [
+        {"hotelBasicInfo": {"hotelNo": "4", "hotelName": "道後の宿", "hotelSpecial": "露天風呂のある宿"}},
+        {"hotelFacilitiesInfo": {"hotelFacilities": [{"item": "ビーチ"}, {"item": "スキー"}, {"item": "サウナ"}]}},
+    ]
+    assert rt.tags_from(parts) == ["露天風呂", "サウナ"]
