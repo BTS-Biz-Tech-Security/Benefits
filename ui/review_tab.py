@@ -1,4 +1,4 @@
-"""詳細の口コミタブ。件数・星の平均・お得感の満足の割合、口コミの一覧（写真つき）、口コミを書く入口。"""
+"""詳細の口コミタブ。お得感の満足の割合、口コミの一覧（写真つき）、口コミを書く入口。件数・星の平均は詳細画面の見出しに出す。"""
 from __future__ import annotations
 
 import streamlit as st
@@ -41,12 +41,10 @@ def render_review_tab(user: User, menu: Menu) -> None:
     # ① 一覧と集計を取る
     posts = list_by_menu(menu.id)
     s = summary(posts)
-    # ② 見出し（件数・平均・お得感の満足の割合）と、口コミを書くボタン
+    # ② お得感の満足の割合と、口コミを書くボタン（件数と平均は、詳細画面の見出しに「社員の評価」として出す）
     col_summary, col_button = st.columns([3, 1], vertical_alignment="center")
-    if s.count:
-        col_summary.markdown(f"**{s.count}件**　平均 ★{s.average}")
-        if s.deal_satisfaction is not None:
-            col_summary.caption(f"お得感に満足：{round(s.deal_satisfaction * 100)}%（{s.deal_count}件中）")
+    if s.count and s.deal_satisfaction is not None:
+        col_summary.caption(f"お得感に満足：{round(s.deal_satisfaction * 100)}%（{s.deal_count}件中）")
     if col_button.button("口コミを書く", icon=":material/rate_review:", key=f"review-write-{menu.id}"):
         open_post_dialog(user, menu, None)
     # ③ 空状態

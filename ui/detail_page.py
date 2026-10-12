@@ -11,6 +11,7 @@ from typing import Optional
 import streamlit as st
 
 from day_plan import load_market_prices
+from posts import rating_summary
 from pricing import plan_saving
 from models import CATEGORIES, Menu, Plan, User
 from search import get_menu
@@ -51,12 +52,16 @@ def render() -> None:
         st.info("検索結果から施設を選んでください。")
         return
 
-    # ② 見出し（施設名・バッジ・住所・紹介文）
+    # ② 見出し（施設名・バッジと社員の評価・住所・紹介文）
     st.subheader(menu.name)
     color, icon = CATEGORY_BADGES.get(menu.category, ("gray", ""))
     badges = f":{color}-badge[{icon} {CATEGORIES.get(menu.category, menu.category)}]"
     if any(plan.coupon_code for plan in menu.plans):
         badges += "　:blue-badge[:material/confirmation_number: クーポンあり]"
+    # 社員の評価は、検索結果の施設一覧と同じ「社員の評価 ★5.0（3件）」の形で出す（口コミがなければ出さない）
+    count, average = rating_summary([menu.id]).get(menu.id, (0, None))
+    if count:
+        badges += f"　社員の評価 ★{average}（{count}件）"
     st.markdown(badges)
     if menu.address:
         st.caption(menu.address)
