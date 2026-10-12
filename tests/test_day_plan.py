@@ -276,6 +276,45 @@ def test_make_day_plans_without_requested_areas_has_no_alternative(monkeypatch):
     assert [(p.area_name, p.alternative) for p in plans] == [("沖縄", False), ("箱根", False)]
 
 
+def test_make_day_plans_requested_area_longer_than_name(monkeypatch):
+    areas = AREAS + [Area(id="area-kobe", code="kobe", name="神戸・有馬")]
+    monkeypatch.setattr(day_plan, "_load_spots", lambda tenant_id, area_id: [])
+    monkeypatch.setattr(day_plan, "list_areas", lambda tenant_id: areas)
+    monkeypatch.setattr(day_plan, "llm_api_key", lambda: None)
+    menus = [menu("s1", "stay"), menu("s2", "stay", area="area-kobe")]
+    plans = day_plan.make_day_plans("t", menus, "有馬温泉に行きたい", requested_area_names=["有馬温泉"])
+    assert [(p.area_name, p.alternative) for p in plans] == [("神戸・有馬", False), ("箱根", True)]
+
+
+def test_make_day_plans_unknown_requested_area_makes_all_alternative(monkeypatch):
+    monkeypatch.setattr(day_plan, "_load_spots", lambda tenant_id, area_id: [])
+    monkeypatch.setattr(day_plan, "list_areas", lambda tenant_id: AREAS)
+    monkeypatch.setattr(day_plan, "llm_api_key", lambda: None)
+    menus = [menu("s1", "stay", area="area-okinawa"), menu("s2", "stay")]
+    plans = day_plan.make_day_plans("t", menus, "九州に行きたい", requested_area_names=["九州"])
+    assert [(p.area_name, p.alternative) for p in plans] == [("沖縄", True), ("箱根", True)]
+    assert plans[0].explanation.startswith("ご希望のエリア以外からの代替案です。")
+    assert plans[0].requested_areas == ["九州"]
+
+
+def test_area_keywords():
+    keywords = [{"keyword": "箱根", "category": "エリア"}, {"keyword": "旅館", "category": "施設タイプ"},
+                {"keyword": "ゴルフ", "category": "アクティビティ"}]
+    assert day_plan.area_keywords(keywords) == ["箱根"]
+
+
+def test_requested_area_keywords_skips_guessed_areas():
+    keywords = [{"keyword": "熱海", "category": "エリア"}, {"keyword": "城崎", "category": "エリア"},
+                {"keyword": "ホテル", "category": "施設タイプ"}]
+    assert day_plan.requested_area_keywords(keywords, "海が見えるホテルでのんびりしたい") == []
+    assert day_plan.requested_area_keywords(keywords, "熱海でのんびりしたい") == ["熱海"]
+
+
+def test_requested_area_keywords_accepts_reworded_area():
+    keywords = [{"keyword": "草津温泉", "category": "エリア"}]
+    assert day_plan.requested_area_keywords(keywords, "草津に行きたい") == ["草津温泉"]
+
+
 def test_make_day_plans_passes_budget(monkeypatch):
     monkeypatch.setattr(day_plan, "_load_spots", lambda tenant_id, area_id: [])
     monkeypatch.setattr(day_plan, "list_areas", lambda tenant_id: AREAS)
@@ -569,6 +608,32 @@ def test_ai_prompt_mentions_unmet_activities(monkeypatch):
     assert plan is not None
     day_plan._explain_with_ai(plan, "熱海でゴルフ三昧", "key")
     assert "見つからなかった希望：ゴルフ" in sent["prompt"]
+
+
+def test_ai_prompt_names_requested_area_for_alternative(monkeypatch):
+    sent = {}
+
+    class FakeOpenAI:
+        def __init__(self, api_key):
+            self.chat = self
+
+        @property
+        def completions(self):
+            return self
+
+        def create(self, model, messages, max_tokens):
+            sent["prompt"] = messages[0]["content"]
+            return type("R", (), {"choices": [type("C", (), {"message": type("M", (), {"content": "ok"})()})()]})()
+
+    import openai
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI, raising=False)
+    plan = build_day_plan([menu("s1", "stay", price=30000)], [], "熱海")
+    assert plan is not None
+    plan.alternative = True
+    plan.requested_areas = ["福岡"]
+    day_plan._explain_with_ai(plan, "福岡に行きたい", "key")
+    assert "利用者が希望したエリア：福岡" in sent["prompt"]
+    assert "ご希望の福岡ではなく、熱海のプランです" in sent["prompt"]
 
 
 def test_benefit_item_remembers_proposed_plan_id():
