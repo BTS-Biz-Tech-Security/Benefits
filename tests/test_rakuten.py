@@ -86,3 +86,42 @@ def test_room_totals_filters_by_meal():
     assert room_totals(RESPONSE, meal_flags("素泊まり")) == [24000]
     assert room_totals(RESPONSE, meal_flags(None)) == [24000, 31000]  # 条件なしは絞らない
     assert room_totals(RESPONSE, meal_flags("朝食付き")) == []  # 合う部屋がない
+
+
+def test_fetch_price_asks_plan_list_cheapest_first(monkeypatch):
+    seen = {}
+
+    def fake_get(url, params, headers, timeout):
+        seen.update(params)
+        return FakeResponse(200, RESPONSE)
+    monkeypatch.setattr(rakuten.requests, "get", fake_get)
+    fetch_price("123", date(2026, 11, 21), 1, 2, CREDS)
+    # 施設ごと（既定）だと代表の1プランしか返らないため、宿泊プランごとの一覧を安い順に取る
+    assert (seen["searchPattern"], seen["sort"], seen["hits"], seen["page"]) == (1, "+roomCharge", 30, 1)
+
+
+def test_fetch_price_turns_pages_until_meal_matches(monkeypatch):
+    only_stay = {"pagingInfo": {"pageCount": 2}, "hotels": [{"hotel": [RESPONSE["hotels"][0]["hotel"][1]]}]}
+    with_meals = {"pagingInfo": {"pageCount": 2}, "hotels": [{"hotel": [RESPONSE["hotels"][0]["hotel"][2]]}]}
+    pages = []
+
+    def fake_get(url, params, headers, timeout):
+        pages.append(params["page"])
+        return FakeResponse(200, only_stay if params["page"] == 1 else with_meals)
+    monkeypatch.setattr(rakuten.requests, "get", fake_get)
+    monkeypatch.setattr(rakuten.time, "sleep", lambda s: None)
+    got = fetch_price("123", date(2026, 11, 21), 1, 2, CREDS, meal="2食付き")
+    assert got.price == 31000 and pages == [1, 2]
+
+
+def test_fetch_price_stops_at_last_page(monkeypatch):
+    only_stay = {"pagingInfo": {"pageCount": 1}, "hotels": [{"hotel": [RESPONSE["hotels"][0]["hotel"][1]]}]}
+    pages = []
+
+    def fake_get(url, params, headers, timeout):
+        pages.append(params["page"])
+        return FakeResponse(200, only_stay)
+    monkeypatch.setattr(rakuten.requests, "get", fake_get)
+    with pytest.raises(rakuten.NotAvailable):
+        fetch_price("123", date(2026, 11, 21), 1, 2, CREDS, meal="2食付き")
+    assert pages == [1]

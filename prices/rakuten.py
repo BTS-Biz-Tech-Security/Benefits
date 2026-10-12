@@ -3,11 +3,13 @@
 - 楽天のアプリID・アクセスキーがない、または hotel_ref が楽天のホテル番号（数字）でない宿は、仮の価格（ダミー）を返す
 - 取得に失敗したときは例外を投げる。再試行と停止は呼び出し側（update.py・refresh.py）が決める
 - 価格は料金プランごとに取る（人数・泊数・食事の条件をプランに合わせる。部屋のグレードは区別しない）
+- 空室検索は宿泊プランごとの一覧（searchPattern=1）を安い順で取る。施設ごと（既定の0）だと代表の1プランしか返らず、食事の条件に合う部屋が見つからないため
 - 2026年の楽天ウェブサービスの新しい仕様に合わせている（新しいドメイン、アプリIDとアクセスキーの両方が必要）
 """
 from __future__ import annotations
 
 import hashlib
+import time
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any, Optional
@@ -19,6 +21,13 @@ TIMEOUT = 10
 SATURDAY_RATE = 1.2  # 仮の価格: 土曜は2割高くする
 DUMMY_RATE_MIN = 0.80  # 仮の価格: 定価のこの割合〜DUMMY_RATE_MAX の間にする（宿ごとに決まった値）
 DUMMY_RATE_MAX = 0.98
+HITS = 30  # 1回の問い合わせで返す宿泊プランの数（APIの上限）
+MAX_PAGES = 3  # 食事の条件に合う部屋が見つかるまで、安い順に何ページまで見るか
+INTERVAL_SEC = 1.0  # ページをめくるときの間隔（続けて呼ぶと一時的に止められるため）
+
+
+class NotAvailable(ValueError):
+    """空室がない、または条件に合う料金がない。取り直しても結果は変わらないので、呼び出し側は再試行しない。"""
 
 
 @dataclass
@@ -51,6 +60,15 @@ MEAL_FLAGS = {  # 料金プランの食事の条件 → 楽天の（夕食あり
 }
 
 
+def request_headers(creds: Credentials) -> dict[str, str]:
+    """楽天APIに送るヘッダー。アクセスキーはヘッダーで送る（URLに残さないため）。許可Webサイトを登録していれば Referer も送る。"""
+    headers = {"accessKey": creds.access_key}
+    if creds.referer:
+        headers["Referer"] = creds.referer
+        headers["Origin"] = creds.referer.rstrip("/")
+    return headers
+
+
 def meal_flags(meal: Optional[str]) -> Optional[tuple[bool, bool]]:
     """料金プランの食事の条件を、楽天の（夕食あり, 朝食あり）に直す。条件がない・分からないときは None（絞らない）。"""
     return MEAL_FLAGS.get((meal or "").strip()) if meal else None
@@ -66,8 +84,29 @@ def fetch_price(hotel_ref: str, checkin: date, nights: int, adults: int, creds: 
     if creds is None or not creds.ready() or not is_rakuten_ref(hotel_ref):
         return dummy_price(hotel_ref, checkin, nights, adults, reference_price)
 
-    # ② 空室検索APIを呼ぶ。アクセスキーはヘッダーで送る（URLに残さないため）
-    params = {
+    # ② 空室検索APIを、宿泊プランごとの一覧・安い順で呼ぶ。食事の条件に合う部屋が見つかるまでページをめくる
+    flags = meal_flags(meal)
+    for page in range(1, MAX_PAGES + 1):
+        if page > 1:
+            time.sleep(INTERVAL_SEC)
+        r = requests.get(API_URL, params=vacant_params(hotel_ref, checkin, nights, adults, creds, page),
+                         headers=request_headers(creds), timeout=TIMEOUT)
+        if r.status_code == 404:  # 空室がないときは 404 が返る
+            raise NotAvailable("空室がありません" if page == 1 else "条件に合う料金が見つかりません")
+        r.raise_for_status()
+        data = r.json()
+        # ③ 食事の条件が合う部屋の料金から最安を取る。料金は1泊目のものなので、泊数をかけて合計にする
+        totals = room_totals(data, flags)
+        if totals:
+            return Fetched(min(totals) * nights, "rakuten_api", hotel_url(data))
+        if page >= int((data.get("pagingInfo") or {}).get("pageCount") or 1):
+            break
+    raise NotAvailable("条件に合う料金が見つかりません")
+
+
+def vacant_params(hotel_ref: str, checkin: date, nights: int, adults: int, creds: Credentials, page: int = 1) -> dict[str, Any]:
+    """空室検索APIに渡す条件。宿泊プランごとの一覧（searchPattern=1）を、料金の安い順に HITS 件ずつ取る。"""
+    return {
         "applicationId": creds.application_id,
         "format": "json",
         "hotelNo": hotel_ref,
@@ -75,25 +114,14 @@ def fetch_price(hotel_ref: str, checkin: date, nights: int, adults: int, creds: 
         "checkoutDate": (checkin + timedelta(days=nights)).isoformat(),
         "adultNum": adults,
         "responseType": "small",
+        "searchPattern": 1,
+        "sort": "+roomCharge",
+        "hits": HITS,
+        "page": page,
     }
-    headers = {"accessKey": creds.access_key}
-    if creds.referer:
-        headers["Referer"] = creds.referer
-        headers["Origin"] = creds.referer.rstrip("/")
-    r = requests.get(API_URL, params=params, headers=headers, timeout=TIMEOUT)
-    if r.status_code == 404:  # 空室がないときは 404 が返る
-        raise ValueError("空室がありません")
-    r.raise_for_status()
-    data = r.json()
-
-    # ③ 食事の条件が合う部屋の料金から最安を取る。料金は1泊目のものなので、泊数をかけて合計にする
-    totals = room_totals(data, meal_flags(meal))
-    if not totals:
-        raise ValueError("条件に合う料金が見つかりません")
-    return Fetched(min(totals) * nights, "rakuten_api", hotel_url(data))
 
 
-def _hotel_parts(data: dict[str, Any]) -> list[dict[str, Any]]:
+def hotel_parts(data: dict[str, Any]) -> list[dict[str, Any]]:
     """応答の hotels から、宿ごとの部品（hotelBasicInfo や roomInfo を持つ dict）を平らに並べる。"""
     parts: list[dict[str, Any]] = []
     for item in data.get("hotels", []):
@@ -112,7 +140,7 @@ def room_totals(data: dict[str, Any], flags: Optional[tuple[bool, bool]] = None)
     roomInfo は [{"roomBasicInfo": {...}}, {"dailyCharge": {...}}] のように、1部屋の部品が順に並ぶ。
     """
     totals: list[int] = []
-    for part in _hotel_parts(data):
+    for part in hotel_parts(data):
         rooms = part.get("roomInfo") or []
         basic: dict[str, Any] = {}
         for room in rooms if isinstance(rooms, list) else [rooms]:
@@ -133,7 +161,7 @@ def room_totals(data: dict[str, Any], flags: Optional[tuple[bool, bool]] = None)
 
 def hotel_url(data: dict[str, Any]) -> Optional[str]:
     """宿の楽天トラベルのページ。比較の根拠として画面に出す。"""
-    for part in _hotel_parts(data):
+    for part in hotel_parts(data):
         info = part.get("hotelBasicInfo")
         if isinstance(info, dict) and info.get("hotelInformationUrl"):
             return info["hotelInformationUrl"]

@@ -61,7 +61,7 @@ def row(price=20000, fetched_at=NOW - timedelta(hours=7), source="rakuten_api", 
 
 def run(db, menus, price=20000, fetch=None):
     fetch = fetch or (lambda *a, **k: Fetched(price, "rakuten_api", None))
-    return refresh.refresh_market_prices(menus, table=db.table, creds=CREDS, checkin=CHECKIN, now=NOW, fetch=fetch)
+    return refresh.refresh_market_prices(menus, table=db.table, creds=CREDS, dates=[CHECKIN], now=NOW, fetch=fetch)
 
 
 def ops(db):
@@ -133,4 +133,53 @@ def test_limits_per_search():
 
 
 def test_needs_refresh_when_checkin_differs():
-    assert refresh.needs_refresh(row(fetched_at=NOW, checkin=date(2026, 10, 10)), CHECKIN, NOW)
+    assert refresh.needs_refresh(row(fetched_at=NOW, checkin=date(2026, 10, 10)), [CHECKIN], NOW)
+
+
+def test_compare_dates_are_saturdays_four_weeks_apart():
+    # 2026/10/11（日）の4週間後は11/8（日）。その後の最初の土曜は11/14
+    assert refresh.compare_dates(date(2026, 10, 11)) == [date(2026, 11, 14), date(2026, 12, 12), date(2027, 1, 9)]
+    # 4週間後がちょうど土曜なら、その日から
+    assert refresh.compare_dates(date(2026, 10, 17))[0] == date(2026, 11, 14)
+
+
+def test_first_available_tries_next_date_when_not_available():
+    from prices.rakuten import NotAvailable
+    tried = []
+
+    def call(d):
+        tried.append(d)
+        if d == date(2026, 11, 14):
+            raise NotAvailable("空室がありません")
+        return Fetched(30000, "rakuten_api", None)
+    dates = [date(2026, 11, 14), date(2026, 12, 12), date(2027, 1, 9)]
+    fetched, day = refresh.first_available(dates, call, sleep=lambda s: None)
+    assert (fetched.price, day) == (30000, date(2026, 12, 12)) and tried == dates[:2]
+
+
+def test_first_available_does_not_retry_on_communication_error():
+    import pytest
+    tried = []
+
+    def call(d):
+        tried.append(d)
+        raise RuntimeError("500")
+    with pytest.raises(RuntimeError):
+        refresh.first_available([date(2026, 11, 14), date(2026, 12, 12)], call, sleep=lambda s: None)
+    assert tried == [date(2026, 11, 14)]
+
+
+def test_refresh_saves_the_date_that_was_found():
+    from prices.rakuten import NotAvailable
+    first, second = date(2026, 11, 14), date(2026, 12, 12)
+
+    def fetch(hotel_ref, checkin, nights, adults, creds, meal=None):
+        if checkin == first:
+            raise NotAvailable("空室がありません")
+        return Fetched(30000, "rakuten_api", None)
+    db = FakeDB([])
+    assert refresh.refresh_market_prices([menu()], table=db.table, creds=CREDS, dates=[first, second], now=NOW,
+                                         fetch=fetch, sleep=lambda s: None) == 1
+    assert db.calls[-1][1]["checkin"] == second.isoformat()
+    # 2つ目の候補の日の値は、次の検索では取り直さない
+    assert not refresh.needs_refresh(row(fetched_at=NOW, checkin=second), [first, second], NOW)
