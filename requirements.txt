@@ -3,3 +3,9 @@ supabase>=2.4
 requests>=2.32
 pytest>=8
 openai>=1.40
+
+# Security floors for transitive dependencies (known CVEs in older versions)
+httpcore2>=2.10.0
+httpx2>=2.12.0
+pillow>=12.3.0
+pygments>=2.20.0
